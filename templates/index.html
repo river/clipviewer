@@ -48,29 +48,31 @@
 			<button id="loadButton" type="submit" class="btn btn-primary">Load</button>
 		</form>
 
-		<div class="mb-3 d-flex justify-content-between align-items-center">
-			<div>
-				<button id="prevButton" class="btn btn-primary">
-					<i class="fas fa-arrow-left"></i> Previous
-				</button>
-				<button id="nextButton" class="btn btn-primary">
-					Next <i class="fas fa-arrow-right"></i>
-				</button>
-				<button id="goToPageButton" class="btn btn-secondary">
-					Jump to…
-				</button>
-			</div>
-			<div class="position-relative flex-grow-1 mx-4" style="height: 38px;">
-				<!-- <div id="pageInfo" class="align-middle"></div> -->
-				<div class="progress">
-					<span id="pageInfo"></span>
-					<div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;"></div>
+		<div id="clip-viewer">
+			<div class="mb-3 d-flex justify-content-between align-items-center">
+				<div>
+					<button id="prevButton" class="btn btn-primary">
+						<i class="fas fa-arrow-left"></i> Previous
+					</button>
+					<button id="nextButton" class="btn btn-primary">
+						Next <i class="fas fa-arrow-right"></i>
+					</button>
+					<button id="goToPageButton" class="btn btn-secondary">
+						Jump to…
+					</button>
 				</div>
+				<div class="position-relative flex-grow-1 mx-4" style="height: 38px;">
+					<!-- <div id="pageInfo" class="align-middle"></div> -->
+					<div class="progress">
+						<span id="pageInfo"></span>
+						<div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;"></div>
+					</div>
+				</div>
+				<button id="saveButton" class="btn btn-success">Save Comments</button>
 			</div>
-			<button id="saveButton" class="btn btn-success">Save Comments</button>
-		</div>
 
-		<div class="row row-cols-1 row-cols-md-3 g-4" id="clipGrid"></div>
+			<div class="row row-cols-1 row-cols-md-3 g-4" id="clipGrid"></div>
+		</div>
 	</div>
 
 	<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>

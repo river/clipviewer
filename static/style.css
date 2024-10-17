@@ -12,6 +12,10 @@
     100% { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
+#clip-viewer {
+	opacity: 10%;
+}
+
 .alert {
 	width: 700px;
 	position: absolute;

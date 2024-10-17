@@ -32,7 +32,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 		// Show loading spinner
 		showLoadingSpinner();
-		document.getElementById('clipGrid').style.opacity = '10%';
+		document.getElementById('clip-viewer').style.opacity = '10%';
 
 		axios.post('/load_csv', { csv_path: csvPath, metadata_fields: metadataFields })
 			.then(response => {
@@ -45,7 +45,7 @@ document.addEventListener('DOMContentLoaded', function() {
 			.finally(() => {
 				// Hide loading spinner
 				hideLoadingSpinner();
-				document.getElementById('clipGrid').style.opacity = '100%';
+				document.getElementById('clip-viewer').style.opacity = '100%';
 			});
 	}
 
