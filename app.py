@@ -1,5 +1,6 @@
 import os, sys, argparse
 from datetime import datetime
+from typing import List
 
 from flask import Flask, render_template, request, jsonify, send_file
 import pandas as pd
@@ -9,11 +10,6 @@ import pandas as pd
 # -------------
 
 # additional columns from the csv file to show
-METADATA_TO_SHOW = [
-    "gt_labels",
-    "split",
-    "study_type",
-]
 VIDEO_BASE_PATH = "/"  # base directory for avipaths
 CLIPS_PER_PAGE = 6  # how many clips to show on each page
 
@@ -26,6 +22,7 @@ app = Flask(__name__)
 echo_df = None
 comments_df = None
 comments_path = None
+metadata_fields = None
 
 @app.route("/")
 def index():
@@ -34,13 +31,15 @@ def index():
 
 @app.route('/load_csv', methods=['POST'])
 def load_csv():
-    global echo_df, comments_df, comments_path
+    global echo_df, comments_df, comments_path, metadata_fields
     
     csv_path = str(request.json['csv_path'])
+    metadata_fields = [m.strip() for m in str(request.json['metadata_fields']).split(',') if m.strip()]
 
     try:
         echo_df = pd.read_csv(csv_path)
-        check_required_columns(echo_df)
+        if metadata_fields:
+            check_required_columns(echo_df, metadata_fields)
         echo_df = echo_df.dropna(subset="avipath")
         check_video_files(echo_df)
 
@@ -56,14 +55,14 @@ def load_csv():
         return jsonify({"status": "error", "message": str(e)}), 400
 
 
-def check_required_columns(df):
-    missing_columns = set(METADATA_TO_SHOW + ["avipath"]) - set(df.columns)
+def check_required_columns(df: pd.DataFrame, metadata_fields: List[str]):
+    missing_columns = set(metadata_fields + ["avipath"]) - set(df.columns)
     if missing_columns:
         raise ValueError(
-            f"CSV is missing required columns: {', '.join(missing_columns)}"
+            f"CSV is missing metadata columns: {', '.join(missing_columns)}"
         )
 
-def check_video_files(df):
+def check_video_files(df: pd.DataFrame):
     for _, row in df.head(10).iterrows():
         video_path = os.path.join(VIDEO_BASE_PATH, row["avipath"])
         if not os.path.isfile(video_path):
@@ -72,7 +71,7 @@ def check_video_files(df):
 
 @app.route("/get_clips")
 def get_clips():
-    global echo_df, comments_df
+    global echo_df, comments_df, metadata_fields
     
     page = int(request.args.get("page", 0))
     start_idx = page * CLIPS_PER_PAGE
@@ -82,7 +81,7 @@ def get_clips():
     for idx in range(start_idx, end_idx):
         row = echo_df.iloc[idx]
         filename = row.avipath.split("/")[-1]
-        metadata = " | ".join([f"{m}: {str(row[m])}" for m in METADATA_TO_SHOW])
+        metadata = ", ".join([f"{m}: {str(row[m])}" for m in metadata_fields]) if metadata_fields else ""
         clip_reviewed = str((comments_df["filename"] == filename).any())
         existing_comment = comments_df[comments_df["filename"] == filename][
             "comments"
