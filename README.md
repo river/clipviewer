@@ -24,7 +24,7 @@
    pip install flask pandas
    ```
 
-3. (Optional:) Adjust `METADATA_TO_SHOW`, `VIDEO_BASE_PATH`, `CLIPS_PER_PAGE` in `app.py`
+3. (Optional:) Adjust `VIDEO_BASE_PATH`, `CLIPS_PER_PAGE` in `app.py`
 
 ## Usage
 
