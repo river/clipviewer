@@ -201,10 +201,13 @@ document.addEventListener('DOMContentLoaded', function() {
 	}
 
 	function handleKeydown(event) {
-		if (event.key === 'ArrowLeft') {
-			prevPage();
-		} else if (event.key === 'ArrowRight') {
-			nextPage();
+		// Check if the active element is not an input or textarea
+		if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+			if (event.key === 'ArrowLeft') {
+				prevPage();
+			} else if (event.key === 'ArrowRight') {
+				nextPage();
+			}
 		}
 	}
 });
