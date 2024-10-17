@@ -36,12 +36,17 @@
 	<div id="app" class="container mt-4">
 		<h1 class="mb-4">clipviewer</h1>
 
-		<div class="mb-3 d-flex align-items-center justify-content-between">
-			<form id="loadForm" class="d-flex flex-grow-1" onsubmit="event.preventDefault(); document.getElementById('loadButton').click();">
-				<input type="text" id="csvPathInput" class="form-control me-2" placeholder="Enter CSV file path">
-				<button id="loadButton" type="button" class="btn btn-primary">Load</button>
-			</form>
-		</div>
+		<form id="loadForm" class="mb-3 d-flex align-items-center justify-content-between">
+			<div class="input-group me-2">
+				<span class="input-group-text">Echos</span>
+				<input type="text" id="csvPathInput" class="form-control" placeholder="CSV file path">
+			</div>
+			<div class="input-group me-2">
+				<span class="input-group-text">Metadata</span>
+				<input type="text" id="metadataInput" class="form-control" value="gt_labels,split,study_type">
+			</div>
+			<button id="loadButton" type="submit" class="btn btn-primary">Load</button>
+		</form>
 
 		<div class="mb-3 d-flex justify-content-between align-items-center">
 			<div>
@@ -56,8 +61,9 @@
 				</button>
 			</div>
 			<div class="position-relative flex-grow-1 mx-4" style="height: 38px;">
-				<div id="pageInfo" class="align-middle"></div>
+				<!-- <div id="pageInfo" class="align-middle"></div> -->
 				<div class="progress">
+					<span id="pageInfo"></span>
 					<div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;"></div>
 				</div>
 			</div>
