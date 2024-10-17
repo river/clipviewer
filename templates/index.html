@@ -36,6 +36,13 @@
 	<div id="app" class="container mt-4">
 		<h1 class="mb-4">clipviewer</h1>
 
+		<div class="mb-3 d-flex align-items-center justify-content-between">
+			<form id="loadForm" class="d-flex flex-grow-1" onsubmit="event.preventDefault(); document.getElementById('loadButton').click();">
+				<input type="text" id="csvPathInput" class="form-control me-2" placeholder="Enter CSV file path">
+				<button id="loadButton" type="button" class="btn btn-primary">Load</button>
+			</form>
+		</div>
+
 		<div class="mb-3 d-flex justify-content-between align-items-center">
 			<div>
 				<button id="prevButton" class="btn btn-primary">
