@@ -22,23 +22,50 @@ document.addEventListener('DOMContentLoaded', function() {
 	}
 
     function loadCSV() {
-        const csvPath = csvPathInput.value;
+		const csvPath = csvPathInput.value;
 		const metadataFields = metadataInput.value;
 
-        if (!csvPath) {
-            showAlert('Please enter CSV path', 'danger');
-            return;
-        }
+		if (!csvPath) {
+			showAlert('Please enter CSV path', 'danger');
+			return;
+		}
 
-        axios.post('/load_csv', { csv_path: csvPath, metadata_fields: metadataFields })
-            .then(response => {
-                showAlert(response.data.message);
-                fetchClips();
-            })
-            .catch(error => {
-                showAlert(error.response.data.message, 'danger');
-            });
-    }
+		// Show loading spinner
+		showLoadingSpinner();
+		document.getElementById('clipGrid').style.opacity = '10%';
+
+		axios.post('/load_csv', { csv_path: csvPath, metadata_fields: metadataFields })
+			.then(response => {
+				showAlert(response.data.message);
+				fetchClips();
+			})
+			.catch(error => {
+				showAlert(error.response.data.message, 'danger');
+			})
+			.finally(() => {
+				// Hide loading spinner
+				hideLoadingSpinner();
+				document.getElementById('clipGrid').style.opacity = '100%';
+			});
+	}
+
+	function showLoadingSpinner() {
+		// Create and show the loading spinner
+		const spinner = document.createElement('div');
+		spinner.id = 'loading-spinner';
+		spinner.className = 'spinner-border text-primary';
+		spinner.setAttribute('role', 'status');
+		spinner.innerHTML = '<span class="sr-only">Loading...</span>';
+		document.body.appendChild(spinner);
+	}
+
+	function hideLoadingSpinner() {
+		// Remove the loading spinner
+		const spinner = document.getElementById('loading-spinner');
+		if (spinner) {
+			spinner.remove();
+		}
+	}
 
 	// ------------------------
 	// navigation
