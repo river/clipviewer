@@ -24,18 +24,17 @@
    pip install flask pandas
    ```
 
-3. (Optional:) Adjust `METADATA_TO_SHOW`, `VIDEO_BASE_PATH`, `CLIPS_PER_PAGE`, `PORT` in `app.py`
+3. (Optional:) Adjust `METADATA_TO_SHOW`, `VIDEO_BASE_PATH`, `CLIPS_PER_PAGE` in `app.py`
 
 ## Usage
 
 1. Start the Flask server:
    ```
-   python app.py [-h] csv_path comments_path port(optional)
+   python app.py [-h] port(optional)
    ```
-   Where `csv_path` is the path to the csv file containing the avi file paths and any additional optional metadata about the clips; and `comments_path` is a directory in which to write the annotations. `port` is optional and defaults to 8888.
 
 2. Open a web browser and navigate to `http://localhost:8888` (or the appropriate port if you've changed it).
 
 ## Notes
 
-- Comments are saved with timestamped backups created each time comments are saved. The `comments.csv` file contains the most up to date annotations. 
+- Comments are saved to the same directory as the echo csv file, with `_comments.csv` appended to it. Ensure that this app has permissions to write to the same directory that the echo csv file is in.

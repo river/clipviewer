@@ -96,7 +96,7 @@ function showAlert(message, type = 'success') {
 }
 
 function updateUI() {
-	pageInfo.textContent = `Page ${currentPage + 1} of ${totalPages} (Clips ${Math.min((currentPage + 1) * clipsPerPage, totalClips)} of ${totalClips})`;
+	pageInfo.textContent = `Page ${currentPage + 1} of ${totalPages} (Clips ${currentPage * clipsPerPage + 1}-${Math.min((currentPage + 1) * clipsPerPage, totalClips)} of ${totalClips})`;
 	const progress = ((currentPage + 1) / totalPages) * 100;
 	progressBar.style.width = `${progress}%`;
 	prevButton.disabled = currentPage === 0;
@@ -130,11 +130,33 @@ function handleKeydown(event) {
 }
 
 // Event listeners
-prevButton.addEventListener('click', prevPage);
-nextButton.addEventListener('click', nextPage);
-goToPageButton.addEventListener('click', promptForPage);
-saveButton.addEventListener('click', saveComments);
-document.addEventListener('keydown', handleKeydown);
 
-// Initial fetch
-fetchClips();
+document.addEventListener('DOMContentLoaded', function() {
+    const loadButton = document.getElementById('loadButton');
+    const csvPathInput = document.getElementById('csvPathInput');
+
+    loadButton.addEventListener('click', loadCSV);
+	prevButton.addEventListener('click', prevPage);
+	nextButton.addEventListener('click', nextPage);
+	goToPageButton.addEventListener('click', promptForPage);
+	saveButton.addEventListener('click', saveComments);
+	document.addEventListener('keydown', handleKeydown);
+
+    function loadCSV() {
+        const csvPath = csvPathInput.value;
+
+        if (!csvPath) {
+            showAlert('Please enter CSV path', 'danger');
+            return;
+        }
+
+        axios.post('/load_csv', { csv_path: csvPath })
+            .then(response => {
+                showAlert(response.data.message);
+                fetchClips();
+            })
+            .catch(error => {
+                showAlert(error.response.data.message, 'danger');
+            });
+    }
+});
