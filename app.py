@@ -16,7 +16,6 @@ METADATA_TO_SHOW = [
 ]
 VIDEO_BASE_PATH = "/"  # base directory for avipaths
 CLIPS_PER_PAGE = 6  # how many clips to show on each page
-PORT = 8889
 
 # -----------------------------
 # DO NOT MODIFY BELOW THIS LINE
@@ -107,6 +106,7 @@ if __name__ == "__main__":
         "csv_path", help="Path to the CSV file containing echo clips in avipath column"
     )
     parser.add_argument("comments_path", help="Path to directory to write comments")
+    parser.add_argument("port", type=int, default=8888, help="Port number to run the server on (default: 8888)")
 
     def check_file_exists(path):
         if not os.path.isfile(path):
@@ -142,9 +142,9 @@ if __name__ == "__main__":
             comments_df = pd.read_csv(comments_file, na_filter=False)
         else:
             comments_df = pd.DataFrame(columns=["filename", "comments"])
+            
+        app.run(host="0.0.0.0", port=args.port)
 
     except Exception as e:
         print(f"Error: {str(e)}")
         sys.exit(1)
-
-    app.run(host="0.0.0.0", port=PORT)
