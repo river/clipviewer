@@ -30,11 +30,11 @@
 
 1. Start the Flask server:
    ```
-   python app.py [-h] csv_path comments_path
+   python app.py [-h] csv_path comments_path port(optional)
    ```
-   Where `csv_path` is the path to the csv file containing the avi file paths and any additional optional metadata about the clips; and `comments_path` is a directory in which to write the annotations.
+   Where `csv_path` is the path to the csv file containing the avi file paths and any additional optional metadata about the clips; and `comments_path` is a directory in which to write the annotations. `port` is optional and defaults to 8888.
 
-2. Open a web browser and navigate to `http://localhost:8889` (or the appropriate port if you've changed it).
+2. Open a web browser and navigate to `http://localhost:8888` (or the appropriate port if you've changed it).
 
 ## Notes
 
