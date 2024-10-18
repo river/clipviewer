@@ -113,8 +113,11 @@ def save_comments():
     global comments_df, comments_path
     
     new_comments = request.json
-    for comment in new_comments:  # type: ignore
+    for comment in new_comments:
         filename, comment_text = comment["filename"], comment["comment"]
+        
+        # get rid of new lines in comment text
+        comment_text = comment_text.replace('\n', ' ').replace('\r', '')
 
         if filename in comments_df["filename"].values:
             # if file already has comment, replace comment
