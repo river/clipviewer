@@ -1,4 +1,5 @@
-![Screenshot of clipviewer web app](static/screenshot.png)
+<img src="static/screenshot.png" alt="Screenshot of clipviewer web app" width="400px">
+
 
 # clipviewer
 
