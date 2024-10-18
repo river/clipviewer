@@ -152,12 +152,30 @@ document.addEventListener('DOMContentLoaded', function() {
 	}
 
 	function swapInNextPage() {
-		// console.log("swapInNextPage()")
-
 		// Remove current clips from DOM and clear from memory
 		Array.from(clipGrid.children).forEach(child => {
 			if (!nextClipElements.includes(child)) {
+				// Remove event listeners
+				child.onclick = null;
+				child.onmouseover = null;
+				child.onmouseout = null;
+
+				// Clear video source and pause playback
+				const video = child.querySelector('video');
+				if (video) {
+					video.pause();
+					video.src = '';
+					video.load();
+				}
+
+				// Remove child from DOM
 				child.remove();
+
+				// Clear any references in the child
+				if (child.player) {
+					child.player.dispose();
+					child.player = null;
+				}
 			}
 		});
 
@@ -166,9 +184,17 @@ document.addEventListener('DOMContentLoaded', function() {
 			element.style.display = '';
 		});
 
-		currentClips = nextClips;
-		nextClips = [];
-		nextClipElements = [];
+		// Clear references
+		currentClips.length = 0;
+		currentClips = nextClips.slice(); // Create a shallow copy
+		nextClips.length = 0;
+		nextClipElements.length = 0;
+
+		// Force garbage collection (if supported by the browser)
+		if (window.gc) {
+			window.gc();
+		}
+
 		updatePageInfo();
 		preloadNextPage();
 	}
