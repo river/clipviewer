@@ -169,7 +169,6 @@ document.addEventListener('DOMContentLoaded', function() {
 		currentClips = nextClips;
 		nextClips = [];
 		nextClipElements = [];
-		currentClips.length = 0;
 		updatePageInfo();
 		preloadNextPage();
 	}
@@ -213,6 +212,9 @@ document.addEventListener('DOMContentLoaded', function() {
 			filename: clip.filename,
 			comment: document.getElementById(`comment-${clip.filename}`).value
 		}));
+
+		console.log(comments);
+
 		axios.post('/save_comments', comments)
 			.then(response => {
 				showAlert(`Comments saved to ${response.data.file}`);
