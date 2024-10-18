@@ -1,7 +1,9 @@
 document.addEventListener('DOMContentLoaded', function() {
 
 	// State variables
-	let clips = [];
+	let currentClips = [];
+	let nextClips = [];
+	let nextClipElements = [];
 	let currentPage = 0;
 	let totalPages = 0;
 	let totalClips = 0;
@@ -86,28 +88,97 @@ document.addEventListener('DOMContentLoaded', function() {
 	document.addEventListener('keydown', handleKeydown);
 
 	function fetchClips() {
+		// console.log("fetchClips()")
+
 		axios.get(`/get_clips?page=${currentPage}`)
 			.then(response => {
-				clips = response.data.clips;
+				currentClips = response.data.clips;
 				totalPages = response.data.total_pages;
 				totalClips = response.data.total_clips;
 				clipsPerPage = response.data.clips_per_page;
 				updateUI();
+				preloadNextPage();
 			});
 	}
 
-	function prevPage() {
-		if (currentPage > 0) {
-			saveComments();
-			currentPage--;
-			fetchClips();
+	function preloadNextPage() {
+		// console.log("preloadNextPage()")
+
+		if (currentPage < totalPages - 1) {
+			axios.get(`/get_clips?page=${currentPage + 1}`)
+				.then(response => {
+					nextClips = response.data.clips;
+					createHiddenElements(nextClips);
+				});
 		}
 	}
 
+	function createHiddenElements(clips) {
+		// console.log("createHiddenElements()")
+
+		nextClipElements = [];
+		clips.forEach(clip => {
+			const clipElement = document.createElement('div');
+			clipElement.className = 'col';
+			clipElement.style.display = 'none';
+			clipElement.innerHTML = `
+				<div class="card h-100">
+					<div class="video-container">
+						<video src="/video${clip.video_path}" autoplay loop muted></video>
+					</div>
+					<div class="card-body ${clip.clip_reviewed}">
+						<p class="card-text">${clip.metadata}</p>
+						<textarea id="comment-${clip.filename}" class="form-control">${clip.comment}</textarea>
+					</div>
+				</div>
+			`;
+			nextClipElements.push(clipElement);
+			clipGrid.appendChild(clipElement);
+		});
+	}
+
 	function nextPage() {
+		// console.log("nextPage()")
+
 		if (currentPage < totalPages - 1) {
 			saveComments();
 			currentPage++;
+			if (nextClips.length > 0 && nextClipElements.length > 0) {
+				swapInNextPage();
+			} else {
+				fetchClips();
+			}
+		}
+	}
+
+	function swapInNextPage() {
+		// console.log("swapInNextPage()")
+
+		// Hide current clips
+		Array.from(clipGrid.children).forEach(child => {
+			if (!nextClipElements.includes(child)) {
+				child.style.display = 'none';
+			}
+		});
+
+		// Show next clips
+		nextClipElements.forEach(element => {
+			element.style.display = '';
+		});
+
+		currentClips = nextClips;
+		nextClips = [];
+		nextClipElements = [];
+		updatePageInfo();
+		preloadNextPage();
+	}
+
+	function prevPage() {
+		// console.log("prevPage()")
+
+		if (currentPage > 0) {
+			saveComments();
+			currentPage--;
 			fetchClips();
 		}
 	}
@@ -135,7 +206,9 @@ document.addEventListener('DOMContentLoaded', function() {
 	}
 
 	function saveComments() {
-		const comments = clips.map(clip => ({
+		// console.log("saveComments()")
+
+		const comments = currentClips.map(clip => ({
 			filename: clip.filename,
 			comment: document.getElementById(`comment-${clip.filename}`).value
 		}));
@@ -173,16 +246,23 @@ document.addEventListener('DOMContentLoaded', function() {
 		}, 3000);
 	}
 	
+	function updatePageInfo() {
+		// console.log("updatePageInfo()")
 
-	function updateUI() {
 		pageInfo.textContent = `Page ${currentPage + 1} of ${totalPages} (clips ${currentPage * clipsPerPage + 1}–${Math.min((currentPage + 1) * clipsPerPage, totalClips)} of ${totalClips})`;
 		const progress = ((currentPage + 1) / totalPages) * 100;
 		progressBar.style.width = `${progress}%`;
 		prevButton.disabled = currentPage === 0;
 		nextButton.disabled = currentPage === totalPages - 1;
+	}
+
+	function updateUI() {
+		// console.log("updateUI()")
+
+		updatePageInfo();
 
 		clipGrid.innerHTML = '';
-		clips.forEach(clip => {
+		currentClips.forEach(clip => {
 			const clipHtml = `
 			<div class="col">
 				<div class="card h-100">
@@ -201,8 +281,13 @@ document.addEventListener('DOMContentLoaded', function() {
 	}
 
 	function handleKeydown(event) {
-		// Check if the active element is not an input or textarea
-		if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+		if (event.key === 'Escape') {
+			// esc deselects any input
+			if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
+				document.activeElement.blur();
+			}
+		} else if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+			// left and right arrow (only if input is not selected)
 			if (event.key === 'ArrowLeft') {
 				prevPage();
 			} else if (event.key === 'ArrowRight') {
