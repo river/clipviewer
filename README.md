@@ -1,3 +1,5 @@
+![Screenshot of clipviewer web app](static/screenshot.png)
+
 # clipviewer
 
 **clipviewer** is a simple web app for viewing and annotating video clips; it was designed with viewing and annotating echo clips in mind
