@@ -40,4 +40,5 @@
 
 ## Notes
 
+- Currently videos only load and display properly in Safari. Videos do not load in Chrome for an unknown reason (pull requests welcome).
 - Comments are saved to the same directory as the echo csv file, with `_comments.csv` appended to it. Ensure that this app has permissions to write to the same directory that the echo csv file is in.
