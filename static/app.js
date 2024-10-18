@@ -154,10 +154,10 @@ document.addEventListener('DOMContentLoaded', function() {
 	function swapInNextPage() {
 		// console.log("swapInNextPage()")
 
-		// Hide current clips
+		// Remove current clips from DOM and clear from memory
 		Array.from(clipGrid.children).forEach(child => {
 			if (!nextClipElements.includes(child)) {
-				child.style.display = 'none';
+				child.remove();
 			}
 		});
 
@@ -169,6 +169,7 @@ document.addEventListener('DOMContentLoaded', function() {
 		currentClips = nextClips;
 		nextClips = [];
 		nextClipElements = [];
+		currentClips.length = 0;
 		updatePageInfo();
 		preloadNextPage();
 	}
