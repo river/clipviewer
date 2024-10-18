@@ -213,8 +213,6 @@ document.addEventListener('DOMContentLoaded', function() {
 			comment: document.getElementById(`comment-${clip.filename}`).value
 		}));
 
-		console.log(comments);
-
 		axios.post('/save_comments', comments)
 			.then(response => {
 				showAlert(`Comments saved to ${response.data.file}`);
