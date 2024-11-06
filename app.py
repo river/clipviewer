@@ -24,17 +24,20 @@ comments_df = None
 comments_path = None
 metadata_fields = None
 
+
 @app.route("/")
 def index():
-    return render_template("index.html", clips_per_page=CLIPS_PER_PAGE)
+    return render_template("index.jinja2", clips_per_page=CLIPS_PER_PAGE)
 
 
-@app.route('/load_csv', methods=['POST'])
+@app.route("/load_csv", methods=["POST"])
 def load_csv():
     global echo_df, comments_df, comments_path, metadata_fields
-    
-    csv_path = str(request.json['csv_path'])
-    metadata_fields = [m.strip() for m in str(request.json['metadata_fields']).split(',') if m.strip()]
+
+    csv_path = str(request.json["csv_path"])
+    metadata_fields = [
+        m.strip() for m in str(request.json["metadata_fields"]).split(",") if m.strip()
+    ]
 
     try:
         echo_df = pd.read_csv(csv_path)
@@ -49,7 +52,7 @@ def load_csv():
             comments_df = pd.read_csv(comments_path, na_filter=False)
         else:
             comments_df = pd.DataFrame(columns=["filename", "comments"])
-        
+
         return jsonify({"status": "success", "message": "CSV loaded successfully"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 400
@@ -62,6 +65,7 @@ def check_required_columns(df: pd.DataFrame, metadata_fields: List[str]):
             f"CSV is missing metadata columns: {', '.join(missing_columns)}"
         )
 
+
 def check_video_files(df: pd.DataFrame):
     for _, row in df.head(10).iterrows():
         video_path = os.path.join(VIDEO_BASE_PATH, row["avipath"])
@@ -72,7 +76,7 @@ def check_video_files(df: pd.DataFrame):
 @app.route("/get_clips")
 def get_clips():
     global echo_df, comments_df, metadata_fields
-    
+
     page = int(request.args.get("page", 0))
     start_idx = page * CLIPS_PER_PAGE
     end_idx = min(start_idx + CLIPS_PER_PAGE, len(echo_df))
@@ -81,7 +85,11 @@ def get_clips():
     for idx in range(start_idx, end_idx):
         row = echo_df.iloc[idx]
         filename = row.avipath.split("/")[-1]
-        metadata = ", ".join([f"{m}: {str(row[m])}" for m in metadata_fields]) if metadata_fields else ""
+        metadata = (
+            ", ".join([f"{m}: {str(row[m])}" for m in metadata_fields])
+            if metadata_fields
+            else ""
+        )
         clip_reviewed = str((comments_df["filename"] == filename).any())
         existing_comment = comments_df[comments_df["filename"] == filename][
             "comments"
@@ -111,17 +119,19 @@ def get_clips():
 @app.route("/save_comments", methods=["POST"])
 def save_comments():
     global comments_df, comments_path
-    
+
     new_comments = request.json
     for comment in new_comments:
         filename, comment_text = comment["filename"], comment["comment"]
-        
+
         # get rid of new lines in comment text
-        comment_text = comment_text.replace('\n', ' ').replace('\r', '')
+        comment_text = comment_text.replace("\n", " ").replace("\r", "")
 
         if filename in comments_df["filename"].values:
             # if file already has comment, replace comment
-            comments_df.loc[comments_df["filename"] == filename, "comments"] = comment_text
+            comments_df.loc[comments_df["filename"] == filename, "comments"] = (
+                comment_text
+            )
         else:
             # comment about new file
             new_index = comments_df.index.max() + 1 if len(comments_df) > 0 else 0
@@ -146,7 +156,13 @@ def serve_video(filename):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8888, help="Port number to run the server on (default: 8888)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8888,
+        help="Port number to run the server on (default: 8888)",
+    )
     args = parser.parse_args()
 
-    app.run(host="0.0.0.0", port=args.port)
+    # app.run(host="0.0.0.0", port=args.port)
+    app.run(host="0.0.0.0", port=args.port, debug=True)

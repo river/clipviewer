@@ -45,6 +45,10 @@
 				<span class="input-group-text">Metadata</span>
 				<input type="text" id="metadataInput" class="form-control" value="gt_labels,split,study_type">
 			</div>
+			<div class="input-group me-2">
+				<span class="input-group-text">Options</span>
+				<input type="text" id="labelOptionsInput" class="form-control" value="PLAX,PSAX,A4C,A2C,A3C,SUBCOST">
+			</div>
 			<button id="loadButton" type="submit" class="btn btn-primary">Load</button>
 		</form>
 
@@ -62,7 +66,6 @@
 					</button>
 				</div>
 				<div class="position-relative flex-grow-1 mx-4" style="height: 38px;">
-					<!-- <div id="pageInfo" class="align-middle"></div> -->
 					<div class="progress">
 						<span id="pageInfo"></span>
 						<div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;"></div>
