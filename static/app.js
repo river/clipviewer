@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
 
 	// State variables
 	let currentClips = [];
@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', function() {
 	let currentPage = 0;
 	let totalPages = 0;
 	let totalClips = 0;
+	let labelOptions = []
 
 	// ------------------------
 	// csv and metadata loading
@@ -15,6 +16,7 @@ document.addEventListener('DOMContentLoaded', function() {
 	const loadForm = document.getElementById('loadForm');
 	const csvPathInput = document.getElementById('csvPathInput');
 	const metadataInput = document.getElementById('metadataInput');
+	const labelOptionsInput = document.getElementById('labelOptionsInput');
 
 	loadForm.addEventListener('submit', handleFormSubmit);
 
@@ -23,7 +25,7 @@ document.addEventListener('DOMContentLoaded', function() {
 		loadCSV();
 	}
 
-    function loadCSV() {
+	function loadCSV() {
 		const csvPath = csvPathInput.value;
 		const metadataFields = metadataInput.value;
 
@@ -49,6 +51,9 @@ document.addEventListener('DOMContentLoaded', function() {
 				hideLoadingSpinner();
 				document.getElementById('clip-viewer').style.opacity = '100%';
 			});
+
+		// load label options
+		labelOptions = labelOptionsInput.value.split(',');
 	}
 
 	function showLoadingSpinner() {
@@ -88,8 +93,6 @@ document.addEventListener('DOMContentLoaded', function() {
 	document.addEventListener('keydown', handleKeydown);
 
 	function fetchClips() {
-		// console.log("fetchClips()")
-
 		axios.get(`/get_clips?page=${currentPage}`)
 			.then(response => {
 				currentClips = response.data.clips;
@@ -113,25 +116,37 @@ document.addEventListener('DOMContentLoaded', function() {
 		}
 	}
 
-	function createHiddenElements(clips) {
-		// console.log("createHiddenElements()")
+	const videoCardTemplate = (clip) => {
+		optionsHtml = labelOptions.map((optionText) => {
+			return clip.comment === optionText
+				? `<option value='${optionText}' selected>${optionText}</option>`
+				: `<option value='${optionText}'>${optionText}</option>`;
+		}).join('');
 
-		nextClipElements = [];
-		clips.forEach(clip => {
-			const clipElement = document.createElement('div');
-			clipElement.className = 'col';
-			clipElement.style.display = 'none';
-			clipElement.innerHTML = `
+		return `
+			<div class="col">
 				<div class="card h-100">
 					<div class="video-container">
 						<video src="/video${clip.video_path}" autoplay loop muted></video>
 					</div>
 					<div class="card-body ${clip.clip_reviewed}">
 						<p class="card-text">${clip.metadata}</p>
-						<textarea id="comment-${clip.filename}" class="form-control">${clip.comment}</textarea>
+						<select id="comment-${clip.filename}" class="form-select">
+							${optionsHtml}
+						</select>
 					</div>
 				</div>
-			`;
+			</div>
+		`;
+	}
+
+	function createHiddenElements(clips) {
+		nextClipElements = [];
+		clips.forEach(clip => {
+			const clipElement = document.createElement('div');
+			clipElement.className = 'col';
+			clipElement.style.display = 'none';
+			clipElement.innerHTML = videoCardTemplate(clip);
 			nextClipElements.push(clipElement);
 			clipGrid.appendChild(clipElement);
 		});
@@ -243,7 +258,7 @@ document.addEventListener('DOMContentLoaded', function() {
 			.then(response => {
 				showAlert(`Comments saved to ${response.data.file}`);
 			})
-			.catch(error => {
+			.catch(() => {
 				showAlert('Error saving comments', 'danger');
 			});
 	}
@@ -251,8 +266,8 @@ document.addEventListener('DOMContentLoaded', function() {
 	function showAlert(message, type = 'success') {
 		const alertHtml = `
 			<div class="alert alert-${type} alert-dismissible fade show" role="alert">
-			${message}
-			<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+				${message}
+				<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
 			</div>
 		`;
 		const alertElement = document.createElement('div');
@@ -272,13 +287,13 @@ document.addEventListener('DOMContentLoaded', function() {
 			});
 		}, 3000);
 	}
-	
+
 	function updatePageInfo() {
 		// console.log("updatePageInfo()")
 
 		pageInfo.textContent = `Page ${currentPage + 1} of ${totalPages} (clips ${currentPage * clipsPerPage + 1}–${Math.min((currentPage + 1) * clipsPerPage, totalClips)} of ${totalClips})`;
 		const progress = ((currentPage + 1) / totalPages) * 100;
-		progressBar.style.width = `${progress}%`;
+		progressBar.style.width = `${progress}% `;
 		prevButton.disabled = currentPage === 0;
 		nextButton.disabled = currentPage === totalPages - 1;
 	}
@@ -290,19 +305,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 		clipGrid.innerHTML = '';
 		currentClips.forEach(clip => {
-			const clipHtml = `
-			<div class="col">
-				<div class="card h-100">
-				<div class="video-container">
-					<video src="/video${clip.video_path}" autoplay loop muted></video>
-				</div>
-				<div class="card-body ${clip.clip_reviewed}">
-					<p class="card-text">${clip.metadata}</p>
-					<textarea id="comment-${clip.filename}" class="form-control">${clip.comment}</textarea>
-				</div>
-				</div>
-			</div>
-			`;
+			const clipHtml = videoCardTemplate(clip);
 			clipGrid.insertAdjacentHTML('beforeend', clipHtml);
 		});
 	}
@@ -313,13 +316,13 @@ document.addEventListener('DOMContentLoaded', function() {
 			if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
 				document.activeElement.blur();
 			}
-		} else if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-			// left and right arrow (only if input is not selected)
-			if (event.key === 'ArrowLeft') {
-				prevPage();
-			} else if (event.key === 'ArrowRight') {
-				nextPage();
-			}
+		}
+
+		// left and right arrow
+		if (event.key === 'ArrowLeft') {
+			prevPage();
+		} else if (event.key === 'ArrowRight') {
+			nextPage();
 		}
 	}
 });
