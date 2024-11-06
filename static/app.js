@@ -316,13 +316,14 @@ document.addEventListener('DOMContentLoaded', function () {
 			if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
 				document.activeElement.blur();
 			}
-		}
-
-		// left and right arrow
-		if (event.key === 'ArrowLeft') {
-			prevPage();
-		} else if (event.key === 'ArrowRight') {
-			nextPage();
+		} else if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+			// left and right arrow
+			// and text input is NOT selected
+			if (event.key === 'ArrowLeft') {
+				prevPage();
+			} else if (event.key === 'ArrowRight') {
+				nextPage();
+			}
 		}
 	}
 });
