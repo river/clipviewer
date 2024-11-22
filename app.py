@@ -10,7 +10,7 @@ import pandas as pd
 # -------------
 
 # additional columns from the csv file to show
-VIDEO_BASE_PATH = "/"  # base directory for avipaths
+VIDEO_BASE_PATH = "/"  # base directory for avi_paths
 CLIPS_PER_PAGE = 6  # how many clips to show on each page
 
 # -----------------------------
@@ -43,7 +43,7 @@ def load_csv():
         echo_df = pd.read_csv(csv_path)
         if metadata_fields:
             check_required_columns(echo_df, metadata_fields)
-        echo_df = echo_df.dropna(subset="avipath")
+        echo_df = echo_df.dropna(subset="avi_path")
         check_video_files(echo_df)
 
         # Load existing comments or create a new DataFrame
@@ -59,7 +59,7 @@ def load_csv():
 
 
 def check_required_columns(df: pd.DataFrame, metadata_fields: List[str]):
-    missing_columns = set(metadata_fields + ["avipath"]) - set(df.columns)
+    missing_columns = set(metadata_fields + ["avi_path"]) - set(df.columns)
     if missing_columns:
         raise ValueError(
             f"CSV is missing metadata columns: {', '.join(missing_columns)}"
@@ -68,7 +68,7 @@ def check_required_columns(df: pd.DataFrame, metadata_fields: List[str]):
 
 def check_video_files(df: pd.DataFrame):
     for _, row in df.head(10).iterrows():
-        video_path = os.path.join(VIDEO_BASE_PATH, row["avipath"])
+        video_path = os.path.join(VIDEO_BASE_PATH, row["avi_path"])
         if not os.path.isfile(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
@@ -84,7 +84,7 @@ def get_clips():
     clips = []
     for idx in range(start_idx, end_idx):
         row = echo_df.iloc[idx]
-        filename = row.avipath.split("/")[-1]
+        filename = row.avi_path.split("/")[-1]
         metadata = (
             ", ".join([f"{m}: {str(row[m])}" for m in metadata_fields])
             if metadata_fields
@@ -98,7 +98,7 @@ def get_clips():
 
         clips.append(
             {
-                "video_path": row.avipath,
+                "video_path": row.avi_path,
                 "metadata": metadata,
                 "clip_reviewed": clip_reviewed,
                 "comment": comment,
