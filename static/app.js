@@ -18,10 +18,36 @@ document.addEventListener('DOMContentLoaded', function () {
 	const metadataInput = document.getElementById('metadataInput');
 	const labelOptionsInput = document.getElementById('labelOptionsInput');
 
+	// Load values from URL query parameters and initialize inputs and currentPage
+	const urlParams = new URLSearchParams(window.location.search);
+	csvPathInput.value = urlParams.get('csvPath') || '';
+	metadataInput.value = urlParams.get('metadata') || '';
+	labelOptionsInput.value = urlParams.get('labels') || '';
+	const urlPage = urlParams.get('page');
+	if (urlPage) {
+		currentPage = Number(urlPage);
+	}
+
+	// Update URL with current form inputs and page number
+	function updateUrlParams() {
+		const params = new URLSearchParams();
+		params.set('csvPath', csvPathInput.value);
+		params.set('metadata', metadataInput.value);
+		params.set('labels', labelOptionsInput.value);
+		params.set('page', currentPage);
+		window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+	}
+
 	loadForm.addEventListener('submit', handleFormSubmit);
+
+	// If URL already has parameters, auto-submit the form
+	if (csvPathInput.value) {
+		handleFormSubmit(new Event('submit'));
+	}
 
 	function handleFormSubmit(event) {
 		event.preventDefault();
+		updateUrlParams();
 		loadCSV();
 	}
 
@@ -158,6 +184,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (currentPage < totalPages - 1) {
 			saveComments();
 			currentPage++;
+			updateUrlParams();
 			if (nextClips.length > 0 && nextClipElements.length > 0) {
 				swapInNextPage();
 			} else {
@@ -220,6 +247,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (currentPage > 0) {
 			saveComments();
 			currentPage--;
+			updateUrlParams();
 			fetchClips();
 		}
 	}
@@ -228,6 +256,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (page >= 0 && page <= (totalPages - 1)) {
 			saveComments();
 			currentPage = page;
+			updateUrlParams();
 			fetchClips();
 		} else {
 			alert("Page number is not in range");
