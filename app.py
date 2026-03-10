@@ -1,46 +1,59 @@
 import os
+import re
+import csv
+import io
+import sqlite3
 import argparse
 
-from flask import Flask, render_template, request, jsonify, send_file
-import pandas as pd
+from flask import (
+    Flask,
+    render_template,
+    request,
+    jsonify,
+    send_file,
+    session,
+    Response,
+)
 
 # -------------
 # CONFIGURATION
 # -------------
 
-# additional columns from the csv file to show
-VIDEO_BASE_PATH = "/"  # base directory for avi_paths
-CLIPS_PER_PAGE = 6  # how many clips to show on each page
+VIDEO_BASE_PATH = "/"
+CLIPS_PER_PAGE = 6
 ALLOWED_CSV_DIR = os.environ.get("CLIPVIEWER_CSV_DIR", os.getcwd())
 
-# Pre-resolve constant paths (avoids repeated realpath calls per request)
 _REAL_VIDEO_BASE = os.path.realpath(VIDEO_BASE_PATH)
 _REAL_CSV_DIR = os.path.realpath(ALLOWED_CSV_DIR)
 
-# -----------------------------
-# DO NOT MODIFY BELOW THIS LINE
-# -----------------------------
-
 app = Flask(__name__)
+app.secret_key = os.environ.get("CLIPVIEWER_SECRET_KEY", os.urandom(24))
 
-# NOTE: These module-level globals are not thread-safe.
-# This application should be run with threaded=False.
-# For production use, consider a proper database or per-request state management.
-echo_df = None
-comments_df = None
-comments_path = None
-metadata_fields = None
+_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def is_path_within(path: str, allowed_dir: str) -> bool:
-    """Check that a resolved path is within the allowed directory."""
     real_path = os.path.realpath(path)
     return real_path.startswith(allowed_dir + os.sep) or real_path == allowed_dir
 
 
-def require_csv_loaded():
-    """Return an error response if no CSV is loaded, else None."""
-    if echo_df is None or comments_df is None:
+def get_db_path(csv_path: str) -> str:
+    base, _ = os.path.splitext(csv_path)
+    return f"{base}_clipviewer.db"
+
+
+def get_db() -> sqlite3.Connection:
+    db_path = session.get("db_path")
+    if not db_path or not os.path.isfile(db_path):
+        raise RuntimeError("No database loaded")
+    conn = sqlite3.connect(db_path, timeout=10)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def require_db():
+    db_path = session.get("db_path")
+    if not db_path or not os.path.isfile(db_path):
         return jsonify(
             {"status": "error", "message": "No CSV loaded. Please load a CSV first."}
         ), 400
@@ -54,8 +67,6 @@ def index():
 
 @app.route("/load_csv", methods=["POST"])
 def load_csv():
-    global echo_df, comments_df, comments_path, metadata_fields
-
     csv_path = str(request.json["csv_path"])
     metadata_fields = [
         m.strip() for m in str(request.json["metadata_fields"]).split(",") if m.strip()
@@ -67,81 +78,120 @@ def load_csv():
         ), 403
 
     try:
-        echo_df = pd.read_csv(csv_path)
-        if metadata_fields:
-            check_required_columns(echo_df, metadata_fields)
-        echo_df = echo_df.dropna(subset="avi_path")
-        check_video_files(echo_df)
+        # Read CSV
+        with open(csv_path, newline="") as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames or []
+            rows = list(reader)
 
-        # Load existing comments or create a new DataFrame
+        # Validate columns
+        required = set(metadata_fields + ["avi_path"])
+        missing = required - set(fieldnames)
+        if missing:
+            raise ValueError(f"CSV is missing columns: {', '.join(missing)}")
+
+        # Filter rows with avi_path
+        rows = [r for r in rows if r.get("avi_path")]
+
+        # Check video files (first 100)
+        for row in rows[:100]:
+            video_path = os.path.join(VIDEO_BASE_PATH, row["avi_path"])
+            if not os.path.isfile(video_path):
+                raise FileNotFoundError(f"Video file not found: {video_path}")
+
+        # Create/open database
+        db_path = get_db_path(csv_path)
+        conn = sqlite3.connect(db_path, timeout=10)
+        conn.row_factory = sqlite3.Row
+
+        # Create clips table
+        conn.execute("DROP TABLE IF EXISTS clips")
+        conn.execute("""
+            CREATE TABLE clips (
+                id INTEGER PRIMARY KEY,
+                avi_path TEXT NOT NULL,
+                filename TEXT NOT NULL UNIQUE,
+                metadata TEXT NOT NULL DEFAULT '',
+                comment TEXT NOT NULL DEFAULT ''
+            )
+        """)
+
+        # Pre-format metadata and insert
+        clip_rows = []
+        for row in rows:
+            filename = row["avi_path"].split("/")[-1]
+            metadata = (
+                ", ".join(f"{m}: {row.get(m, '')}" for m in metadata_fields)
+                if metadata_fields
+                else ""
+            )
+            clip_rows.append((row["avi_path"], filename, metadata))
+
+        conn.executemany(
+            "INSERT OR IGNORE INTO clips (avi_path, filename, metadata) VALUES (?, ?, ?)",
+            clip_rows,
+        )
+
+        # Migrate existing _comments.csv if present
         base, ext = os.path.splitext(csv_path)
-        comments_path = f"{base}_comments{ext}"
-        try:
-            comments_df = pd.read_csv(comments_path, na_filter=False)
-        except FileNotFoundError:
-            comments_df = pd.DataFrame(columns=["filename", "comments"])
+        comments_csv_path = f"{base}_comments{ext}"
+        if os.path.isfile(comments_csv_path):
+            with open(comments_csv_path, newline="") as f:
+                comment_reader = csv.DictReader(f)
+                for crow in comment_reader:
+                    fn = crow.get("filename", "")
+                    comment = crow.get("comments", "")
+                    if fn and comment:
+                        conn.execute(
+                            "UPDATE clips SET comment = ? WHERE filename = ?",
+                            (comment, fn),
+                        )
+
+        conn.commit()
+        conn.close()
+
+        session["db_path"] = db_path
+        session["metadata_fields"] = metadata_fields
 
         return jsonify({"status": "success", "message": "CSV loaded successfully"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 400
 
 
-def check_required_columns(df: pd.DataFrame, metadata_fields: list[str]):
-    missing_columns = set(metadata_fields + ["avi_path"]) - set(df.columns)
-    if missing_columns:
-        raise ValueError(
-            f"CSV is missing metadata columns: {', '.join(missing_columns)}"
-        )
-
-
-def check_video_files(df: pd.DataFrame, max_check: int = 100):
-    """Verify video files exist. Checks first max_check rows by default."""
-    rows = df if max_check is None else df.head(max_check)
-    for _, row in rows.iterrows():
-        video_path = os.path.join(VIDEO_BASE_PATH, row["avi_path"])
-        if not os.path.isfile(video_path):
-            raise FileNotFoundError(f"Video file not found: {video_path}")
-
-
 @app.route("/get_clips")
 def get_clips():
-    global echo_df, comments_df, metadata_fields
-
-    if err := require_csv_loaded():
+    if err := require_db():
         return err
 
+    conn = get_db()
     page = int(request.args.get("page", 0))
-    start_idx = page * CLIPS_PER_PAGE
-    end_idx = min(start_idx + CLIPS_PER_PAGE, len(echo_df))
+    offset = page * CLIPS_PER_PAGE
 
-    clips = []
-    for idx in range(start_idx, end_idx):
-        row = echo_df.iloc[idx]
-        filename = row.avi_path.split("/")[-1]
-        metadata = (
-            ", ".join([f"{m}: {str(row[m])}" for m in metadata_fields])
-            if metadata_fields
-            else ""
-        )
-        matching = comments_df[comments_df["filename"] == filename]["comments"].values
-        clip_reviewed = "reviewed" if len(matching) > 0 else ""
-        comment = matching[0] if len(matching) > 0 else ""
+    total = conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0]
+    rows = conn.execute(
+        "SELECT avi_path, filename, metadata, comment FROM clips LIMIT ? OFFSET ?",
+        (CLIPS_PER_PAGE, offset),
+    ).fetchall()
+    conn.close()
 
-        clips.append(
-            {
-                "video_path": row.avi_path,
-                "metadata": metadata,
-                "clip_reviewed": clip_reviewed,
-                "comment": comment,
-                "filename": filename,
-            }
-        )
+    clips = [
+        {
+            "video_path": row["avi_path"],
+            "metadata": row["metadata"],
+            "clip_reviewed": "reviewed" if row["comment"] else "",
+            "comment": row["comment"],
+            "filename": row["filename"],
+        }
+        for row in rows
+    ]
+
+    total_pages = max(1, (total - 1) // CLIPS_PER_PAGE + 1)
 
     return jsonify(
         {
             "clips": clips,
-            "total_pages": (len(echo_df) - 1) // CLIPS_PER_PAGE + 1,
-            "total_clips": len(echo_df),
+            "total_pages": total_pages,
+            "total_clips": total,
             "clips_per_page": CLIPS_PER_PAGE,
         }
     )
@@ -149,32 +199,45 @@ def get_clips():
 
 @app.route("/save_comments", methods=["POST"])
 def save_comments():
-    global comments_df, comments_path
-
-    if err := require_csv_loaded():
+    if err := require_db():
         return err
 
-    new_comments = request.json
-    for comment in new_comments:
-        filename, comment_text = comment["filename"], comment["comment"]
+    conn = get_db()
+    for item in request.json:
+        filename = item["filename"]
+        comment = item["comment"].replace("\n", " ").replace("\r", "")
+        conn.execute(
+            "UPDATE clips SET comment = ? WHERE filename = ?",
+            (comment, filename),
+        )
+    conn.commit()
+    conn.close()
 
-        # get rid of new lines in comment text
-        comment_text = comment_text.replace("\n", " ").replace("\r", "")
+    return jsonify({"status": "success"})
 
-        if filename in comments_df["filename"].values:
-            # if file already has comment, replace comment
-            comments_df.loc[comments_df["filename"] == filename, "comments"] = (
-                comment_text
-            )
-        else:
-            # comment about new file
-            new_index = comments_df.index.max() + 1 if len(comments_df) > 0 else 0
-            comments_df.loc[new_index] = [filename, comment_text]
 
-    # Save comments to file
-    comments_df.to_csv(comments_path, index=False)
+@app.route("/export_comments")
+def export_comments():
+    if err := require_db():
+        return err
 
-    return jsonify({"status": "success", "file": comments_path})
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT filename, comment FROM clips WHERE comment != '' ORDER BY filename"
+    ).fetchall()
+    conn.close()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["filename", "comments"])
+    for row in rows:
+        writer.writerow([row["filename"], row["comment"]])
+
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=comments.csv"},
+    )
 
 
 @app.route("/video/<path:filename>")
@@ -185,7 +248,7 @@ def serve_video(filename):
     return send_file(full_path)
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--port",
@@ -196,4 +259,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     debug = os.environ.get("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
-    app.run(host="0.0.0.0", port=args.port, debug=debug, threaded=False)
+    app.run(host="0.0.0.0", port=args.port, debug=debug)
+
+
+if __name__ == "__main__":
+    main()

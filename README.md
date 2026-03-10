@@ -10,6 +10,7 @@
 - Browse through a collection of video clips
 - View metadata for each clip
 - Add and save comments for individual clips
+- Export comments as a CSV file
 - Navigate using previous/next buttons (including left and right keys on your keyboard) or jump to a specific page
 - Progress bar to show current position in the clip collection
 - Reviewed clips are highlighted
@@ -22,18 +23,16 @@
    cd clipviewer
    ```
 
-2. Install the required Python packages:
+2. Install dependencies:
    ```
-   pip install flask pandas
+   uv sync
    ```
-
-3. (Optional:) Adjust `VIDEO_BASE_PATH`, `CLIPS_PER_PAGE` in `app.py`
 
 ## Usage
 
 1. Start the Flask server:
    ```
-   python app.py [-h] port(optional)
+   uv run python app.py [--port PORT]
    ```
 
 2. Open a web browser and navigate to `http://localhost:8888` (or the appropriate port if you've changed it).
@@ -41,4 +40,5 @@
 ## Notes
 
 - Currently videos only load and display properly in Safari. Videos do not load in Chrome for an unknown reason (pull requests welcome).
-- Comments are saved to the same directory as the echo csv file, with `_comments.csv` appended to it. Ensure that this app has permissions to write to the same directory that the echo csv file is in.
+- Annotations are stored in a SQLite database alongside the input CSV file (e.g., `echoes_clipviewer.db`). Use the "Export CSV" button to download comments as a CSV file.
+- Existing `_comments.csv` files are automatically imported on first load.
