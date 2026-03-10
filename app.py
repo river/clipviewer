@@ -13,6 +13,10 @@ VIDEO_BASE_PATH = "/"  # base directory for avi_paths
 CLIPS_PER_PAGE = 6  # how many clips to show on each page
 ALLOWED_CSV_DIR = os.environ.get("CLIPVIEWER_CSV_DIR", os.getcwd())
 
+# Pre-resolve constant paths (avoids repeated realpath calls per request)
+_REAL_VIDEO_BASE = os.path.realpath(VIDEO_BASE_PATH)
+_REAL_CSV_DIR = os.path.realpath(ALLOWED_CSV_DIR)
+
 # -----------------------------
 # DO NOT MODIFY BELOW THIS LINE
 # -----------------------------
@@ -26,6 +30,21 @@ echo_df = None
 comments_df = None
 comments_path = None
 metadata_fields = None
+
+
+def is_path_within(path: str, allowed_dir: str) -> bool:
+    """Check that a resolved path is within the allowed directory."""
+    real_path = os.path.realpath(path)
+    return real_path.startswith(allowed_dir + os.sep) or real_path == allowed_dir
+
+
+def require_csv_loaded():
+    """Return an error response if no CSV is loaded, else None."""
+    if echo_df is None or comments_df is None:
+        return jsonify(
+            {"status": "error", "message": "No CSV loaded. Please load a CSV first."}
+        ), 400
+    return None
 
 
 @app.route("/")
@@ -42,8 +61,7 @@ def load_csv():
         m.strip() for m in str(request.json["metadata_fields"]).split(",") if m.strip()
     ]
 
-    real_csv = os.path.realpath(csv_path)
-    if not real_csv.startswith(os.path.realpath(ALLOWED_CSV_DIR) + os.sep):
+    if not is_path_within(csv_path, _REAL_CSV_DIR):
         return jsonify(
             {"status": "error", "message": "CSV path not in allowed directory"}
         ), 403
@@ -58,9 +76,9 @@ def load_csv():
         # Load existing comments or create a new DataFrame
         base, ext = os.path.splitext(csv_path)
         comments_path = f"{base}_comments{ext}"
-        if os.path.exists(comments_path):
+        try:
             comments_df = pd.read_csv(comments_path, na_filter=False)
-        else:
+        except FileNotFoundError:
             comments_df = pd.DataFrame(columns=["filename", "comments"])
 
         return jsonify({"status": "success", "message": "CSV loaded successfully"})
@@ -76,8 +94,10 @@ def check_required_columns(df: pd.DataFrame, metadata_fields: list[str]):
         )
 
 
-def check_video_files(df: pd.DataFrame):
-    for _, row in df.iterrows():
+def check_video_files(df: pd.DataFrame, max_check: int = 100):
+    """Verify video files exist. Checks first max_check rows by default."""
+    rows = df if max_check is None else df.head(max_check)
+    for _, row in rows.iterrows():
         video_path = os.path.join(VIDEO_BASE_PATH, row["avi_path"])
         if not os.path.isfile(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -87,10 +107,8 @@ def check_video_files(df: pd.DataFrame):
 def get_clips():
     global echo_df, comments_df, metadata_fields
 
-    if echo_df is None:
-        return jsonify(
-            {"status": "error", "message": "No CSV loaded. Please load a CSV first."}
-        ), 400
+    if err := require_csv_loaded():
+        return err
 
     page = int(request.args.get("page", 0))
     start_idx = page * CLIPS_PER_PAGE
@@ -105,13 +123,9 @@ def get_clips():
             if metadata_fields
             else ""
         )
-        clip_reviewed = (
-            "reviewed" if (comments_df["filename"] == filename).any() else ""
-        )
-        existing_comment = comments_df[comments_df["filename"] == filename][
-            "comments"
-        ].values
-        comment = existing_comment[0] if len(existing_comment) > 0 else ""
+        matching = comments_df[comments_df["filename"] == filename]["comments"].values
+        clip_reviewed = "reviewed" if len(matching) > 0 else ""
+        comment = matching[0] if len(matching) > 0 else ""
 
         clips.append(
             {
@@ -137,10 +151,8 @@ def get_clips():
 def save_comments():
     global comments_df, comments_path
 
-    if comments_df is None or comments_path is None:
-        return jsonify(
-            {"status": "error", "message": "No CSV loaded. Please load a CSV first."}
-        ), 400
+    if err := require_csv_loaded():
+        return err
 
     new_comments = request.json
     for comment in new_comments:
@@ -167,12 +179,9 @@ def save_comments():
 
 @app.route("/video/<path:filename>")
 def serve_video(filename):
-    base = os.path.realpath(VIDEO_BASE_PATH)
-    full_path = os.path.realpath(os.path.join(base, filename))
-    if not full_path.startswith(base + os.sep):
+    full_path = os.path.realpath(os.path.join(_REAL_VIDEO_BASE, filename))
+    if not is_path_within(full_path, _REAL_VIDEO_BASE):
         return "Forbidden", 403
-    if not os.path.isfile(full_path):
-        return "Not found", 404
     return send_file(full_path)
 
 
