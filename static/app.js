@@ -7,7 +7,15 @@ document.addEventListener('DOMContentLoaded', function () {
 	let currentPage = 0;
 	let totalPages = 0;
 	let totalClips = 0;
+	let clipsPerPage = 0;
 	let labelOptions = []
+
+	// Utility: escape HTML to prevent XSS
+	function escapeHtml(str) {
+		const div = document.createElement('div');
+		div.textContent = str;
+		return div.innerHTML;
+	}
 
 	// ------------------------
 	// csv and metadata loading
@@ -62,7 +70,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		// Show loading spinner
 		showLoadingSpinner();
-		document.getElementById('clip-viewer').style.opacity = '10%';
+		document.getElementById('clip-viewer').style.opacity = '0.1';
 
 		axios.post('/load_csv', { csv_path: csvPath, metadata_fields: metadataFields })
 			.then(response => {
@@ -70,12 +78,13 @@ document.addEventListener('DOMContentLoaded', function () {
 				fetchClips();
 			})
 			.catch(error => {
-				showAlert(error.response.data.message, 'danger');
+				const msg = error.response?.data?.message || error.message || 'An error occurred';
+				showAlert(msg, 'danger');
 			})
 			.finally(() => {
 				// Hide loading spinner
 				hideLoadingSpinner();
-				document.getElementById('clip-viewer').style.opacity = '100%';
+				document.getElementById('clip-viewer').style.opacity = '1';
 			});
 
 		// load label options
@@ -131,8 +140,6 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function preloadNextPage() {
-		// console.log("preloadNextPage()")
-
 		if (currentPage < totalPages - 1) {
 			axios.get(`/get_clips?page=${currentPage + 1}`)
 				.then(response => {
@@ -143,10 +150,11 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	const videoCardTemplate = (clip) => {
-		optionsHtml = labelOptions.map((optionText) => {
+		const optionsHtml = labelOptions.map((optionText) => {
+			const escaped = escapeHtml(optionText);
 			return clip.comment === optionText
-				? `<option value='${optionText}' selected>${optionText}</option>`
-				: `<option value='${optionText}'>${optionText}</option>`;
+				? `<option value="${escaped}" selected>${escaped}</option>`
+				: `<option value="${escaped}">${escaped}</option>`;
 		}).join('');
 
 		return `
@@ -155,8 +163,8 @@ document.addEventListener('DOMContentLoaded', function () {
 					<div class="video-container">
 						<video src="/video${clip.video_path}" autoplay loop muted></video>
 					</div>
-					<div class="card-body ${clip.clip_reviewed}">
-						<p class="card-text">${clip.metadata}</p>
+					<div class="card-body ${escapeHtml(clip.clip_reviewed)}">
+						<p class="card-text">${escapeHtml(clip.metadata)}</p>
 						<select id="comment-${clip.filename}" class="form-select">
 							${optionsHtml}
 						</select>
@@ -169,18 +177,16 @@ document.addEventListener('DOMContentLoaded', function () {
 	function createHiddenElements(clips) {
 		nextClipElements = [];
 		clips.forEach(clip => {
-			const clipElement = document.createElement('div');
-			clipElement.className = 'col';
+			const template = document.createElement('template');
+			template.innerHTML = videoCardTemplate(clip).trim();
+			const clipElement = template.content.firstChild;
 			clipElement.style.display = 'none';
-			clipElement.innerHTML = videoCardTemplate(clip);
 			nextClipElements.push(clipElement);
 			clipGrid.appendChild(clipElement);
 		});
 	}
 
 	function nextPage() {
-		// console.log("nextPage()")
-
 		if (currentPage < totalPages - 1) {
 			saveComments();
 			currentPage++;
@@ -232,18 +238,11 @@ document.addEventListener('DOMContentLoaded', function () {
 		nextClips.length = 0;
 		nextClipElements.length = 0;
 
-		// Force garbage collection (if supported by the browser)
-		if (window.gc) {
-			window.gc();
-		}
-
 		updatePageInfo();
 		preloadNextPage();
 	}
 
 	function prevPage() {
-		// console.log("prevPage()")
-
 		if (currentPage > 0) {
 			saveComments();
 			currentPage--;
@@ -276,12 +275,15 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function saveComments() {
-		// console.log("saveComments()")
+		if (currentClips.length === 0) return;
 
-		const comments = currentClips.map(clip => ({
-			filename: clip.filename,
-			comment: document.getElementById(`comment-${clip.filename}`).value
-		}));
+		const comments = currentClips.map(clip => {
+			const el = document.getElementById(`comment-${clip.filename}`);
+			return {
+				filename: clip.filename,
+				comment: el ? el.value : ''
+			};
+		});
 
 		axios.post('/save_comments', comments)
 			.then(response => {
@@ -305,7 +307,8 @@ document.addEventListener('DOMContentLoaded', function () {
 		const alertContainer = document.getElementById('alertContainer');
 		alertContainer.appendChild(alert);
 
-		// Force a reflow to ensure the 'show' class takes effect
+		// Reading offsetHeight forces a browser reflow, ensuring the
+		// 'show' class CSS transition triggers correctly on the alert.
 		alertContainer.offsetHeight;
 
 		// Set up fade-out and removal for this specific alert
@@ -318,18 +321,14 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function updatePageInfo() {
-		// console.log("updatePageInfo()")
-
 		pageInfo.textContent = `Page ${currentPage + 1} of ${totalPages} (clips ${currentPage * clipsPerPage + 1}–${Math.min((currentPage + 1) * clipsPerPage, totalClips)} of ${totalClips})`;
-		const progress = ((currentPage + 1) / totalPages) * 100;
+		const progress = totalPages > 0 ? ((currentPage + 1) / totalPages) * 100 : 0;
 		progressBar.style.width = `${progress}% `;
 		prevButton.disabled = currentPage === 0;
 		nextButton.disabled = currentPage === totalPages - 1;
 	}
 
 	function updateUI() {
-		// console.log("updateUI()")
-
 		updatePageInfo();
 
 		clipGrid.innerHTML = '';
