@@ -10,11 +10,9 @@ document.addEventListener('DOMContentLoaded', function () {
 	let clipsPerPage = 0;
 	let labelOptions = []
 
-	// Utility: escape HTML to prevent XSS
+	// Utility: escape HTML to prevent XSS (string-based, no DOM allocation)
 	function escapeHtml(str) {
-		const div = document.createElement('div');
-		div.textContent = str;
-		return div.innerHTML;
+		return str.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 	}
 
 	// ------------------------
@@ -297,7 +295,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	function showAlert(message, type = 'success') {
 		const alertHtml = `
 			<div class="alert alert-${type} alert-dismissible fade show" role="alert">
-				${message}
+				${escapeHtml(message)}
 				<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
 			</div>
 		`;
