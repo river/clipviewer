@@ -1,6 +1,5 @@
-import os, sys, argparse
-from datetime import datetime
-from typing import List
+import os
+import argparse
 
 from flask import Flask, render_template, request, jsonify, send_file
 import pandas as pd
@@ -12,6 +11,11 @@ import pandas as pd
 # additional columns from the csv file to show
 VIDEO_BASE_PATH = "/"  # base directory for avi_paths
 CLIPS_PER_PAGE = 6  # how many clips to show on each page
+ALLOWED_CSV_DIR = os.environ.get("CLIPVIEWER_CSV_DIR", os.getcwd())
+
+# Pre-resolve constant paths (avoids repeated realpath calls per request)
+_REAL_VIDEO_BASE = os.path.realpath(VIDEO_BASE_PATH)
+_REAL_CSV_DIR = os.path.realpath(ALLOWED_CSV_DIR)
 
 # -----------------------------
 # DO NOT MODIFY BELOW THIS LINE
@@ -19,15 +23,33 @@ CLIPS_PER_PAGE = 6  # how many clips to show on each page
 
 app = Flask(__name__)
 
+# NOTE: These module-level globals are not thread-safe.
+# This application should be run with threaded=False.
+# For production use, consider a proper database or per-request state management.
 echo_df = None
 comments_df = None
 comments_path = None
 metadata_fields = None
 
 
+def is_path_within(path: str, allowed_dir: str) -> bool:
+    """Check that a resolved path is within the allowed directory."""
+    real_path = os.path.realpath(path)
+    return real_path.startswith(allowed_dir + os.sep) or real_path == allowed_dir
+
+
+def require_csv_loaded():
+    """Return an error response if no CSV is loaded, else None."""
+    if echo_df is None or comments_df is None:
+        return jsonify(
+            {"status": "error", "message": "No CSV loaded. Please load a CSV first."}
+        ), 400
+    return None
+
+
 @app.route("/")
 def index():
-    return render_template("index.jinja2", clips_per_page=CLIPS_PER_PAGE)
+    return render_template("index.jinja2")
 
 
 @app.route("/load_csv", methods=["POST"])
@@ -39,6 +61,11 @@ def load_csv():
         m.strip() for m in str(request.json["metadata_fields"]).split(",") if m.strip()
     ]
 
+    if not is_path_within(csv_path, _REAL_CSV_DIR):
+        return jsonify(
+            {"status": "error", "message": "CSV path not in allowed directory"}
+        ), 403
+
     try:
         echo_df = pd.read_csv(csv_path)
         if metadata_fields:
@@ -47,10 +74,11 @@ def load_csv():
         check_video_files(echo_df)
 
         # Load existing comments or create a new DataFrame
-        comments_path = csv_path.replace(".csv", "_comments.csv")
-        if os.path.exists(comments_path):
+        base, ext = os.path.splitext(csv_path)
+        comments_path = f"{base}_comments{ext}"
+        try:
             comments_df = pd.read_csv(comments_path, na_filter=False)
-        else:
+        except FileNotFoundError:
             comments_df = pd.DataFrame(columns=["filename", "comments"])
 
         return jsonify({"status": "success", "message": "CSV loaded successfully"})
@@ -58,7 +86,7 @@ def load_csv():
         return jsonify({"status": "error", "message": str(e)}), 400
 
 
-def check_required_columns(df: pd.DataFrame, metadata_fields: List[str]):
+def check_required_columns(df: pd.DataFrame, metadata_fields: list[str]):
     missing_columns = set(metadata_fields + ["avi_path"]) - set(df.columns)
     if missing_columns:
         raise ValueError(
@@ -66,8 +94,10 @@ def check_required_columns(df: pd.DataFrame, metadata_fields: List[str]):
         )
 
 
-def check_video_files(df: pd.DataFrame):
-    for _, row in df.head(10).iterrows():
+def check_video_files(df: pd.DataFrame, max_check: int = 100):
+    """Verify video files exist. Checks first max_check rows by default."""
+    rows = df if max_check is None else df.head(max_check)
+    for _, row in rows.iterrows():
         video_path = os.path.join(VIDEO_BASE_PATH, row["avi_path"])
         if not os.path.isfile(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
@@ -76,6 +106,9 @@ def check_video_files(df: pd.DataFrame):
 @app.route("/get_clips")
 def get_clips():
     global echo_df, comments_df, metadata_fields
+
+    if err := require_csv_loaded():
+        return err
 
     page = int(request.args.get("page", 0))
     start_idx = page * CLIPS_PER_PAGE
@@ -90,11 +123,9 @@ def get_clips():
             if metadata_fields
             else ""
         )
-        clip_reviewed = str((comments_df["filename"] == filename).any())
-        existing_comment = comments_df[comments_df["filename"] == filename][
-            "comments"
-        ].values
-        comment = existing_comment[0] if len(existing_comment) > 0 else ""
+        matching = comments_df[comments_df["filename"] == filename]["comments"].values
+        clip_reviewed = "reviewed" if len(matching) > 0 else ""
+        comment = matching[0] if len(matching) > 0 else ""
 
         clips.append(
             {
@@ -120,6 +151,9 @@ def get_clips():
 def save_comments():
     global comments_df, comments_path
 
+    if err := require_csv_loaded():
+        return err
+
     new_comments = request.json
     for comment in new_comments:
         filename, comment_text = comment["filename"], comment["comment"]
@@ -140,18 +174,15 @@ def save_comments():
     # Save comments to file
     comments_df.to_csv(comments_path, index=False)
 
-    # Also save a timestamped version
-    # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # comments_path_timestamp = comments_path.replace(".csv", f"_{timestamp}.csv")
-    # comments_df.to_csv(comments_path_timestamp, index=False)
-
     return jsonify({"status": "success", "file": comments_path})
 
 
 @app.route("/video/<path:filename>")
 def serve_video(filename):
-    full_path = os.path.join(VIDEO_BASE_PATH, filename)
-    return send_file(full_path, mimetype="video/mp4")
+    full_path = os.path.realpath(os.path.join(_REAL_VIDEO_BASE, filename))
+    if not is_path_within(full_path, _REAL_VIDEO_BASE):
+        return "Forbidden", 403
+    return send_file(full_path)
 
 
 if __name__ == "__main__":
@@ -164,5 +195,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # app.run(host="0.0.0.0", port=args.port)
-    app.run(host="0.0.0.0", port=args.port, debug=True)
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
+    app.run(host="0.0.0.0", port=args.port, debug=debug, threaded=False)
