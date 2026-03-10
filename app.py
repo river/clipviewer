@@ -1,5 +1,4 @@
 import os
-import re
 import csv
 import io
 import sqlite3
@@ -13,6 +12,7 @@ from flask import (
     send_file,
     session,
     Response,
+    abort,
 )
 
 # -------------
@@ -29,8 +29,6 @@ _REAL_CSV_DIR = os.path.realpath(ALLOWED_CSV_DIR)
 app = Flask(__name__)
 app.secret_key = os.environ.get("CLIPVIEWER_SECRET_KEY", os.urandom(24))
 
-_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
 
 def is_path_within(path: str, allowed_dir: str) -> bool:
     real_path = os.path.realpath(path)
@@ -43,21 +41,18 @@ def get_db_path(csv_path: str) -> str:
 
 
 def get_db() -> sqlite3.Connection:
+    """Open a DB connection from the session, or abort 400 if none loaded."""
     db_path = session.get("db_path")
     if not db_path or not os.path.isfile(db_path):
-        raise RuntimeError("No database loaded")
+        abort(400, description="No CSV loaded. Please load a CSV first.")
     conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def require_db():
-    db_path = session.get("db_path")
-    if not db_path or not os.path.isfile(db_path):
-        return jsonify(
-            {"status": "error", "message": "No CSV loaded. Please load a CSV first."}
-        ), 400
-    return None
+@app.errorhandler(400)
+def bad_request(e):
+    return jsonify({"status": "error", "message": e.description}), 400
 
 
 @app.route("/")
@@ -99,24 +94,7 @@ def load_csv():
             if not os.path.isfile(video_path):
                 raise FileNotFoundError(f"Video file not found: {video_path}")
 
-        # Create/open database
-        db_path = get_db_path(csv_path)
-        conn = sqlite3.connect(db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-
-        # Create clips table
-        conn.execute("DROP TABLE IF EXISTS clips")
-        conn.execute("""
-            CREATE TABLE clips (
-                id INTEGER PRIMARY KEY,
-                avi_path TEXT NOT NULL,
-                filename TEXT NOT NULL UNIQUE,
-                metadata TEXT NOT NULL DEFAULT '',
-                comment TEXT NOT NULL DEFAULT ''
-            )
-        """)
-
-        # Pre-format metadata and insert
+        # Build clip tuples with pre-formatted metadata
         clip_rows = []
         for row in rows:
             filename = row["avi_path"].split("/")[-1]
@@ -127,31 +105,47 @@ def load_csv():
             )
             clip_rows.append((row["avi_path"], filename, metadata))
 
-        conn.executemany(
-            "INSERT OR IGNORE INTO clips (avi_path, filename, metadata) VALUES (?, ?, ?)",
-            clip_rows,
-        )
+        # Create/open database and import
+        db_path = get_db_path(csv_path)
+        with sqlite3.connect(db_path, timeout=10) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS clips (
+                    id INTEGER PRIMARY KEY,
+                    avi_path TEXT NOT NULL,
+                    filename TEXT NOT NULL UNIQUE,
+                    metadata TEXT NOT NULL DEFAULT '',
+                    comment TEXT NOT NULL DEFAULT ''
+                )
+            """)
 
-        # Migrate existing _comments.csv if present
-        base, ext = os.path.splitext(csv_path)
-        comments_csv_path = f"{base}_comments{ext}"
-        if os.path.isfile(comments_csv_path):
-            with open(comments_csv_path, newline="") as f:
-                comment_reader = csv.DictReader(f)
-                for crow in comment_reader:
-                    fn = crow.get("filename", "")
-                    comment = crow.get("comments", "")
-                    if fn and comment:
-                        conn.execute(
-                            "UPDATE clips SET comment = ? WHERE filename = ?",
-                            (comment, fn),
-                        )
+            # Upsert: update avi_path and metadata, preserve existing comments
+            conn.executemany(
+                """INSERT INTO clips (avi_path, filename, metadata)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(filename) DO UPDATE SET
+                       avi_path = excluded.avi_path,
+                       metadata = excluded.metadata""",
+                clip_rows,
+            )
 
-        conn.commit()
-        conn.close()
+            # Migrate existing _comments.csv if present
+            base, ext = os.path.splitext(csv_path)
+            comments_csv_path = f"{base}_comments{ext}"
+            if os.path.isfile(comments_csv_path):
+                with open(comments_csv_path, newline="") as f:
+                    comment_reader = csv.DictReader(f)
+                    updates = [
+                        (crow.get("comments", ""), crow.get("filename", ""))
+                        for crow in comment_reader
+                        if crow.get("filename") and crow.get("comments")
+                    ]
+                if updates:
+                    conn.executemany(
+                        "UPDATE clips SET comment = ? WHERE filename = ?",
+                        updates,
+                    )
 
         session["db_path"] = db_path
-        session["metadata_fields"] = metadata_fields
 
         return jsonify({"status": "success", "message": "CSV loaded successfully"})
     except Exception as e:
@@ -160,19 +154,15 @@ def load_csv():
 
 @app.route("/get_clips")
 def get_clips():
-    if err := require_db():
-        return err
+    with get_db() as conn:
+        page = int(request.args.get("page", 0))
+        offset = page * CLIPS_PER_PAGE
 
-    conn = get_db()
-    page = int(request.args.get("page", 0))
-    offset = page * CLIPS_PER_PAGE
-
-    total = conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0]
-    rows = conn.execute(
-        "SELECT avi_path, filename, metadata, comment FROM clips LIMIT ? OFFSET ?",
-        (CLIPS_PER_PAGE, offset),
-    ).fetchall()
-    conn.close()
+        total = conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0]
+        rows = conn.execute(
+            "SELECT avi_path, filename, metadata, comment FROM clips ORDER BY id LIMIT ? OFFSET ?",
+            (CLIPS_PER_PAGE, offset),
+        ).fetchall()
 
     clips = [
         {
@@ -199,33 +189,25 @@ def get_clips():
 
 @app.route("/save_comments", methods=["POST"])
 def save_comments():
-    if err := require_db():
-        return err
-
-    conn = get_db()
-    for item in request.json:
-        filename = item["filename"]
-        comment = item["comment"].replace("\n", " ").replace("\r", "")
-        conn.execute(
+    updates = [
+        (item["comment"].replace("\n", " ").replace("\r", ""), item["filename"])
+        for item in request.json
+    ]
+    with get_db() as conn:
+        conn.executemany(
             "UPDATE clips SET comment = ? WHERE filename = ?",
-            (comment, filename),
+            updates,
         )
-    conn.commit()
-    conn.close()
 
     return jsonify({"status": "success"})
 
 
 @app.route("/export_comments")
 def export_comments():
-    if err := require_db():
-        return err
-
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT filename, comment FROM clips WHERE comment != '' ORDER BY filename"
-    ).fetchall()
-    conn.close()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT filename, comment FROM clips WHERE comment != '' ORDER BY filename"
+        ).fetchall()
 
     buf = io.StringIO()
     writer = csv.writer(buf)
