@@ -12,10 +12,6 @@
     100% { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
-#clip-viewer {
-	opacity: 10%;
-}
-
 .alert {
 	width: 700px;
 	position: absolute;
@@ -55,12 +51,12 @@
 	object-fit: contain;
 }
 
-.card-body.True {
+.card-body.reviewed {
 	/* these clips were already reviewed */
 	background-color: rgb(224, 245, 255);
 }
 
-[data-bs-theme=dark] .card-body.True {
+[data-bs-theme=dark] .card-body.reviewed {
 	/* these clips were already reviewed */
 	background-color: rgb(0, 42, 61);
 }
