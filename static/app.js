@@ -388,6 +388,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		updatePageInfo();
 		clipGrid.style.minHeight = '';
 		preloadAdjacentPages();
+		markDisplayedClipsReviewed();
 	}
 
 	function fetchClips() {
@@ -424,13 +425,9 @@ document.addEventListener('DOMContentLoaded', function () {
 		// Update local state synchronously (before currentPage changes)
 		currentClips.forEach(clip => {
 			clip.clip_reviewed = 'reviewed';
+			clip.newClip = true;
 		});
 		syncClipsToCache();
-
-		// Update DOM so saveCurrentDom captures the reviewed state
-		clipGrid.querySelectorAll('.card-body:not(.reviewed)').forEach(el => {
-			el.classList.add('reviewed');
-		});
 
 		// Fire-and-forget POST to server
 		axios.post('/mark_reviewed', unreviewedPaths).catch(() => {});
@@ -444,6 +441,7 @@ document.addEventListener('DOMContentLoaded', function () {
 			applyPageData(data);
 			updateUI();
 			preloadAdjacentPages();
+			markDisplayedClipsReviewed();
 		}).catch(() => {
 			if (gen !== navGeneration) return;
 			showAlert('Error loading clips', 'danger');
@@ -479,7 +477,7 @@ document.addEventListener('DOMContentLoaded', function () {
 						</div>
 						<video src="/video${escapeHtml(clip.avi_path)}" autoplay loop muted></video>
 					</div>
-					<div class="card-body ${escapeHtml(clip.clip_reviewed)}">
+					<div class="card-body ${clip.clip_reviewed === 'reviewed' && !clip.newClip ? 'reviewed' : ''}">
 						<p class="card-text">${formatMetadata(clip.metadata)}</p>
 						${commentHtml}
 					</div>
@@ -489,8 +487,15 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function navigateToPage(page) {
-		markDisplayedClipsReviewed();
 		saveComments({ silent: true });
+		currentClips.forEach((clip, index) => {
+			if (clip.newClip) {
+				clip.newClip = false;
+				const body = clipGrid.querySelector(`#comment-${index}`)?.closest('.card-body');
+				if (body) body.classList.add('reviewed');
+			}
+		});
+		syncClipsToCache();
 		clipGrid.style.minHeight = clipGrid.offsetHeight + 'px';
 		saveCurrentDom();
 		currentPage = page;
