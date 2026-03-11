@@ -3,7 +3,7 @@ name = "clipviewer"
 version = "0.1.0"
 description = "A simple web app for viewing and annotating video clips"
 requires-python = ">=3.10"
-dependencies = ["flask", "typer"]
+dependencies = ["flask", "gunicorn", "typer"]
 
 [project.scripts]
 clipviewer = "app:cli"
