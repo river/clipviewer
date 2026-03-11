@@ -166,28 +166,25 @@ document.addEventListener('DOMContentLoaded', function () {
 		labelOptions = ['', ...labelOptionsInput.value.split(',').filter(s => s.trim() !== '')];
 	}
 
-	// Declared early; assigned after DOM refs are created below.
-	// Only called asynchronously (from the /load_file response handler),
-	// so the references are always initialised by the time this runs.
-	let _saveButton, _autoSaveIndicator;
-
+	// Called asynchronously (from the /load_file response handler), so
+	// saveButton and autoSaveIndicator are always initialised by call time.
 	function applyReadOnlyState() {
-		_saveButton.disabled = readOnly;
-		_saveButton.classList.toggle('btn-success', !readOnly);
-		_saveButton.classList.toggle('btn-secondary', readOnly);
+		saveButton.disabled = readOnly;
+		saveButton.classList.toggle('btn-success', !readOnly);
+		saveButton.classList.toggle('btn-secondary', readOnly);
 
-		_autoSaveIndicator.style.visibility = readOnly ? 'visible' : 'hidden';
-		_autoSaveIndicator.querySelector('i').className = readOnly ? 'bi bi-cloud-slash' : 'bi bi-cloud-check';
+		autoSaveIndicator.style.visibility = readOnly ? 'visible' : 'hidden';
+		autoSaveIndicator.querySelector('i').className = readOnly ? 'bi bi-cloud-slash' : 'bi bi-cloud-check';
 
 		const tooltipText = readOnly
 			? 'Saving is not possible — no write access to file directory'
 			: 'Auto-saved';
-		const tooltip = bootstrap.Tooltip.getInstance(_autoSaveIndicator);
+		const tooltip = bootstrap.Tooltip.getInstance(autoSaveIndicator);
 		if (tooltip) {
 			tooltip.setContent({ '.tooltip-inner': tooltipText });
 		} else if (readOnly) {
-			_autoSaveIndicator.setAttribute('title', tooltipText);
-			new bootstrap.Tooltip(_autoSaveIndicator);
+			autoSaveIndicator.setAttribute('title', tooltipText);
+			new bootstrap.Tooltip(autoSaveIndicator);
 		}
 
 		if (readOnly) {
@@ -225,7 +222,6 @@ document.addEventListener('DOMContentLoaded', function () {
 	const jumpToGo = document.getElementById('jumpToGo');
 	const progressClickArea = document.getElementById('progressClickArea');
 	const saveButton = document.getElementById('saveButton');
-	_saveButton = saveButton;
 	const pageInfo = document.getElementById('pageInfo');
 	const progressBar = document.getElementById('progressBar');
 	const clipGrid = document.getElementById('clipGrid');
@@ -481,7 +477,6 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	const autoSaveIndicator = document.getElementById('autoSaveIndicator');
-	_autoSaveIndicator = autoSaveIndicator;
 
 	function showAutoSaveIndicator() {
 		if (readOnly) return;
