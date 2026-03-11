@@ -123,6 +123,9 @@ document.addEventListener('DOMContentLoaded', function () {
 	nextButton.addEventListener('click', nextPage);
 	goToPageButton.addEventListener('click', promptForPage);
 	saveButton.addEventListener('click', saveComments);
+	document.getElementById('exportButton').addEventListener('click', () => {
+		window.location.href = '/export_comments';
+	});
 	document.addEventListener('keydown', handleKeydown);
 
 	function fetchClips() {
@@ -285,7 +288,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		axios.post('/save_comments', comments)
 			.then(response => {
-				showAlert(`Comments saved to ${response.data.file}`);
+				showAlert('Comments saved');
 			})
 			.catch(() => {
 				showAlert('Error saving comments', 'danger');
