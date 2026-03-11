@@ -6,6 +6,8 @@
 
 ## Features
 
+- Load clip lists from **CSV or Parquet** files
+- Auto-detects the video path column if `avi_path` is not present
 - Browse through a collection of video clips
 - View metadata for each clip
 - Add and save comments for individual clips
@@ -13,6 +15,7 @@
 - Navigate using previous/next buttons (including left and right keys on your keyboard) or jump to a specific page
 - Progress bar to show current position in the clip collection
 - Reviewed clips are highlighted
+- Graceful read-only mode when the file directory is not writable
 
 ## Setup
 
@@ -34,11 +37,12 @@ Open `http://localhost:8888` in your browser.
 | Option | Description | Default |
 |---|---|---|
 | `--port` | Port number | `8888` |
-| `--csv-dir` | Allowed directory for CSV files | Current working directory |
+| `--file-dir` | Allowed directory for CSV / Parquet files | Current working directory |
 | `--debug` | Use Flask dev server instead of gunicorn | Off |
 
 ## Notes
 
 - Videos are automatically converted to H.264 MP4 for cross-browser compatibility. Videos already in H.264/yuv420p format are served directly.
-- Annotations are stored in a SQLite database alongside the input CSV (e.g., `echoes_clipviewer.db`). Use "Export CSV" to download comments.
-- Comments are preserved when reloading the same CSV.
+- Annotations are stored in a SQLite database alongside the input file (e.g., `echoes_clipviewer.db`). Use "Export CSV" to download comments.
+- Comments are preserved when reloading the same file.
+- If the file directory is not writable, the database is stored in a temporary directory and a read-only indicator is shown.

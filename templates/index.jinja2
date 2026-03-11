@@ -37,10 +37,10 @@
 		<form id="loadForm" class="mb-3 d-flex align-items-center justify-content-between">
 			<div class="input-group me-2">
 				<span class="input-group-text">Echos</span>
-				<input type="text" id="csvPathInput" class="form-control" placeholder="CSV file path">
+				<input type="text" id="filePathInput" class="form-control" placeholder="CSV / Parquet file path">
 				<span class="input-group-text p-0">
 					<button type="button" class="btn btn-sm btn-link text-secondary" data-bs-toggle="tooltip" data-bs-placement="bottom"
-						title="Path to the CSV file to load. The CSV must contain an avi_path column with the path to each video clip. Any additional columns can be displayed as metadata.">
+						title="Path to a CSV or Parquet file to load. The file should contain an avi_path column with the path to each video clip (or a column with video paths will be auto-detected). Any additional columns can be displayed as metadata.">
 						<i class="bi bi-info-circle"></i>
 					</button>
 				</span>
