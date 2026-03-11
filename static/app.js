@@ -153,32 +153,35 @@ document.addEventListener('DOMContentLoaded', function () {
 		}
 		return axios.get(`/get_clips?page=${page}`).then(response => {
 			pageCache.set(page, response.data);
-			evictCache(page);
+			evictCache();
 			return response.data;
 		});
 	}
 
-	function evictCache(nearPage) {
-		if (pageCache.size <= MAX_CACHE_SIZE) return;
-		const pages = Array.from(pageCache.keys());
-		pages.sort((a, b) => Math.abs(b - nearPage) - Math.abs(a - nearPage));
+	function evictCache() {
 		while (pageCache.size > MAX_CACHE_SIZE) {
-			pageCache.delete(pages.shift());
+			let farthest = null;
+			let maxDist = -1;
+			for (const key of pageCache.keys()) {
+				const dist = Math.abs(key - currentPage);
+				if (dist > maxDist) { maxDist = dist; farthest = key; }
+			}
+			pageCache.delete(farthest);
 		}
 	}
 
 	function preloadAdjacentPages() {
 		if (currentPage > 0 && !pageCache.has(currentPage - 1)) {
-			getCachedOrFetch(currentPage - 1);
+			getCachedOrFetch(currentPage - 1).catch(() => {});
 		}
 		if (currentPage < totalPages - 1 && !pageCache.has(currentPage + 1)) {
-			getCachedOrFetch(currentPage + 1);
+			getCachedOrFetch(currentPage + 1).catch(() => {});
 		}
 	}
 
 	function fetchClips() {
 		getCachedOrFetch(currentPage).then(data => {
-			currentClips = data.clips;
+			currentClips = data.clips.map(c => ({...c}));
 			totalPages = data.total_pages;
 			totalClips = data.total_clips;
 			clipsPerPage = data.clips_per_page;
@@ -268,9 +271,9 @@ document.addEventListener('DOMContentLoaded', function () {
 			return { avi_path: clip.avi_path, comment };
 		});
 
-		// Sync updated comments into the cache
+		// Sync updated comments back into the cache
 		if (pageCache.has(currentPage)) {
-			pageCache.get(currentPage).clips = currentClips.slice();
+			pageCache.get(currentPage).clips = currentClips.map(c => ({...c}));
 		}
 
 		return axios.post('/save_comments', comments)
