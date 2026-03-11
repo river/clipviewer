@@ -37,8 +37,19 @@
 
 2. Open a web browser and navigate to `http://localhost:8888` (or the appropriate port if you've changed it).
 
+## Configuration
+
+The app can be configured via environment variables:
+
+| Variable | Description | Default |
+|---|---|---|
+| `CLIPVIEWER_CSV_DIR` | Allowed directory for CSV files | Current working directory |
+| `CLIPVIEWER_SECRET_KEY` | Flask session secret key | Random on each restart |
+| `FLASK_DEBUG` | Enable debug mode (`1`, `true`, or `yes`) | `false` |
+
 ## Notes
 
 - Currently videos only load and display properly in Safari. Videos do not load in Chrome for an unknown reason (pull requests welcome).
 - Annotations are stored in a SQLite database alongside the input CSV file (e.g., `echoes_clipviewer.db`). Use the "Export CSV" button to download comments as a CSV file.
+- Comments are preserved when reloading the same CSV — only video paths and metadata are updated.
 - Existing `_comments.csv` files are automatically imported on first load.
