@@ -8,7 +8,7 @@ import hashlib
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
+import threading
 
 from flask import (
     Flask,
@@ -237,33 +237,52 @@ def export_comments():
     )
 
 
+_convert_locks: dict[str, threading.Lock] = {}
+_convert_locks_guard = threading.Lock()
+
+
 def _to_mp4(video_path: str) -> str:
     """Convert video to H.264 MP4 in temp dir for cross-browser playback."""
-    src = Path(video_path)
-    path_hash = hashlib.md5(str(src).encode()).hexdigest()
-    dst = Path(_tmpdir) / f"{src.stem}_{path_hash}.mp4"
-    if dst.exists():
-        return str(dst)
-    tmp_dst = dst.with_suffix(".tmp.mp4")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "error",
-            "-i",
-            str(src),
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            str(tmp_dst),
-        ],
-        check=True,
-        timeout=120,
-    )
-    os.replace(str(tmp_dst), str(dst))
-    return str(dst)
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    path_hash = hashlib.md5(video_path.encode()).hexdigest()
+    dst = os.path.join(_tmpdir, f"{stem}_{path_hash}.mp4")
+
+    # Per-path lock prevents duplicate concurrent ffmpeg conversions
+    with _convert_locks_guard:
+        lock = _convert_locks.setdefault(path_hash, threading.Lock())
+
+    with lock:
+        # Serve cached file if it exists and source hasn't changed
+        if os.path.isfile(dst):
+            if os.path.getmtime(dst) >= os.path.getmtime(video_path):
+                return dst
+
+        tmp_fd, tmp_dst = tempfile.mkstemp(suffix=".mp4", dir=_tmpdir)
+        os.close(tmp_fd)
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    video_path,
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    tmp_dst,
+                ],
+                check=True,
+                timeout=120,
+            )
+            os.replace(tmp_dst, dst)
+        except BaseException:
+            os.unlink(tmp_dst)
+            raise
+
+    return dst
 
 
 @app.route("/video/<path:filename>")
