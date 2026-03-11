@@ -1,6 +1,8 @@
+import atexit
 import os
 import argparse
 import hashlib
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -23,6 +25,7 @@ _REAL_CSV_DIR = os.path.realpath(ALLOWED_CSV_DIR)
 
 # Temp directory for converted MP4 files (for cross-browser compatibility)
 _tmpdir = tempfile.mkdtemp(prefix="clipviewer_")
+atexit.register(shutil.rmtree, _tmpdir, ignore_errors=True)
 
 # -----------------------------
 # DO NOT MODIFY BELOW THIS LINE
@@ -187,10 +190,11 @@ def save_comments():
 def _to_mp4(video_path: str) -> str:
     """Convert video to H.264 MP4 in temp dir for cross-browser playback."""
     src = Path(video_path)
-    path_hash = hashlib.md5(str(src).encode()).hexdigest()[:8]
+    path_hash = hashlib.md5(str(src).encode()).hexdigest()
     dst = Path(_tmpdir) / f"{src.stem}_{path_hash}.mp4"
     if dst.exists():
         return str(dst)
+    tmp_dst = dst.with_suffix(".tmp.mp4")
     subprocess.run(
         [
             "ffmpeg",
@@ -203,10 +207,12 @@ def _to_mp4(video_path: str) -> str:
             "libx264",
             "-pix_fmt",
             "yuv420p",
-            str(dst),
+            str(tmp_dst),
         ],
         check=True,
+        timeout=120,
     )
+    os.replace(str(tmp_dst), str(dst))
     return str(dst)
 
 
@@ -215,7 +221,10 @@ def serve_video(filename):
     full_path = os.path.realpath(os.path.join(_REAL_VIDEO_BASE, filename))
     if not is_path_within(full_path, _REAL_VIDEO_BASE):
         return "Forbidden", 403
-    mp4_path = _to_mp4(full_path)
+    try:
+        mp4_path = _to_mp4(full_path)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return "Video conversion failed", 500
     return send_file(mp4_path, mimetype="video/mp4")
 
 
