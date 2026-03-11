@@ -9,7 +9,6 @@ document.addEventListener('DOMContentLoaded', function () {
 	let totalClips = 0;
 	let clipsPerPage = 0;
 	let labelOptions = []
-	let freeTextMode = false
 
 	// Utility: escape HTML to prevent XSS (string-based, no DOM allocation)
 	function escapeHtml(str) {
@@ -31,8 +30,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	csvPathInput.value = urlParams.get('csvPath') || '';
 	metadataInput.value = urlParams.get('metadata') || '';
 	labelOptionsInput.value = urlParams.get('labels') || '';
-	freeTextMode = urlParams.get('freeText') === 'true';
-	freeTextToggle.checked = freeTextMode;
+	freeTextToggle.checked = urlParams.get('freeText') === 'true';
 	const urlPage = urlParams.get('page');
 	if (urlPage) {
 		currentPage = Number(urlPage);
@@ -44,7 +42,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		params.set('csvPath', csvPathInput.value);
 		params.set('metadata', metadataInput.value);
 		params.set('labels', labelOptionsInput.value);
-		params.set('freeText', freeTextMode);
+		params.set('freeText', freeTextToggle.checked);
 		params.set('page', currentPage);
 		window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
 	}
@@ -52,21 +50,20 @@ document.addEventListener('DOMContentLoaded', function () {
 	loadForm.addEventListener('submit', handleFormSubmit);
 
 	freeTextToggle.addEventListener('change', function () {
-		freeTextMode = freeTextToggle.checked;
 		updateUrlParams();
 		if (currentClips.length > 0) {
-			saveComments().then(() => {
-				// Re-fetch current clips to get updated comments, then re-render
-				axios.get(`/get_clips?page=${currentPage}`).then(response => {
-					currentClips = response.data.clips;
-					updateUI();
-					// Clear and rebuild preloaded next page
-					nextClips.length = 0;
-					nextClipElements.forEach(el => el.remove());
-					nextClipElements.length = 0;
-					preloadNextPage();
-				});
+			// Read current comment values from DOM before re-rendering
+			currentClips.forEach(clip => {
+				const el = document.getElementById(`comment-${clip.filename}`);
+				if (el) clip.comment = el.value;
 			});
+			updateUI();
+			// Rebuild preloaded next page elements with new widget type
+			nextClipElements.forEach(el => el.remove());
+			nextClipElements.length = 0;
+			if (nextClips.length > 0) {
+				createHiddenElements(nextClips);
+			}
 		}
 	});
 
@@ -176,7 +173,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	const videoCardTemplate = (clip) => {
 		let commentHtml;
-		if (freeTextMode) {
+		if (freeTextToggle.checked) {
 			commentHtml = `<input type="text" id="comment-${clip.filename}" class="form-control" value="${escapeHtml(clip.comment)}">`;
 		} else {
 			const optionsHtml = labelOptions.map((optionText) => {
