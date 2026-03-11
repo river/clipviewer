@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	let totalClips = 0;
 	let clipsPerPage = 0;
 	let labelOptions = []
+	let readOnly = false;
 
 	// Utility: escape HTML to prevent XSS (string-based, no DOM allocation)
 	function escapeHtml(str) {
@@ -65,18 +66,18 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	// ------------------------
-	// csv and metadata loading
+	// file and metadata loading
 	// ------------------------
 
 	const loadForm = document.getElementById('loadForm');
-	const csvPathInput = document.getElementById('csvPathInput');
+	const filePathInput = document.getElementById('filePathInput');
 	const metadataInput = document.getElementById('metadataInput');
 	const labelOptionsInput = document.getElementById('labelOptionsInput');
 	const freeTextToggle = document.getElementById('freeTextToggle');
 
 	// Load values from URL query parameters and initialize inputs and currentPage
 	const urlParams = new URLSearchParams(window.location.search);
-	csvPathInput.value = urlParams.get('csvPath') || '';
+	filePathInput.value = urlParams.get('filePath') || '';
 	metadataInput.value = urlParams.get('metadata') || '';
 	labelOptionsInput.value = urlParams.get('labels') || '';
 	freeTextToggle.checked = urlParams.get('freeText') === 'true';
@@ -88,7 +89,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	// Update URL with current form inputs and page number
 	function updateUrlParams() {
 		const params = new URLSearchParams();
-		params.set('csvPath', csvPathInput.value);
+		params.set('filePath', filePathInput.value);
 		params.set('metadata', metadataInput.value);
 		params.set('labels', labelOptionsInput.value);
 		params.set('freeText', freeTextToggle.checked);
@@ -120,24 +121,24 @@ document.addEventListener('DOMContentLoaded', function () {
 	});
 
 	// If URL already has parameters, auto-submit the form
-	if (csvPathInput.value) {
+	if (filePathInput.value) {
 		handleFormSubmit(new Event('submit'));
 	}
 
 	function handleFormSubmit(event) {
 		event.preventDefault();
 		updateUrlParams();
-		loadCSV();
+		loadFile();
 	}
 
-	function loadCSV() {
+	function loadFile() {
 		pageCache.clear();
 		clearDomCache();
-		const csvPath = csvPathInput.value;
+		const filePath = filePathInput.value;
 		const metadataFields = metadataInput.value;
 
-		if (!csvPath) {
-			showAlert('Please enter CSV path', 'danger');
+		if (!filePath) {
+			showAlert('Please enter a file path', 'danger');
 			return;
 		}
 
@@ -145,8 +146,10 @@ document.addEventListener('DOMContentLoaded', function () {
 		showLoadingSpinner();
 		document.getElementById('clip-viewer').style.opacity = '0.1';
 
-		axios.post('/load_csv', { csv_path: csvPath, metadata_fields: metadataFields })
-			.then(() => {
+		axios.post('/load_file', { file_path: filePath, metadata_fields: metadataFields })
+			.then((response) => {
+				readOnly = response.data.read_only || false;
+				applyReadOnlyState();
 				fetchClips();
 			})
 			.catch(error => {
@@ -161,6 +164,37 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		// load label options: filter out empty entries, then prepend a single blank option
 		labelOptions = ['', ...labelOptionsInput.value.split(',').filter(s => s.trim() !== '')];
+	}
+
+	function applyReadOnlyState() {
+		const saveBtn = document.getElementById('saveButton');
+		const indicator = document.getElementById('autoSaveIndicator');
+
+		if (readOnly) {
+			saveBtn.disabled = true;
+			saveBtn.classList.remove('btn-success');
+			saveBtn.classList.add('btn-secondary');
+			indicator.style.visibility = 'visible';
+			indicator.querySelector('i').className = 'bi bi-cloud-slash';
+			const tooltip = bootstrap.Tooltip.getInstance(indicator);
+			if (tooltip) {
+				tooltip.setContent({ '.tooltip-inner': 'Saving is not possible — no write access to file directory' });
+			} else {
+				indicator.setAttribute('title', 'Saving is not possible — no write access to file directory');
+				new bootstrap.Tooltip(indicator);
+			}
+			showAlert('Read-only mode: the file directory is not writable. Comments will be stored temporarily but will not persist.', 'warning');
+		} else {
+			saveBtn.disabled = false;
+			saveBtn.classList.remove('btn-secondary');
+			saveBtn.classList.add('btn-success');
+			indicator.style.visibility = 'hidden';
+			indicator.querySelector('i').className = 'bi bi-cloud-check';
+			const tooltip = bootstrap.Tooltip.getInstance(indicator);
+			if (tooltip) {
+				tooltip.setContent({ '.tooltip-inner': 'Auto-saved' });
+			}
+		}
 	}
 
 	function showLoadingSpinner() {
@@ -450,6 +484,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	const autoSaveIndicator = document.getElementById('autoSaveIndicator');
 
 	function showAutoSaveIndicator() {
+		if (readOnly) return;
 		const timeStr = new Date().toLocaleTimeString('en-GB', { hour12: false });
 		autoSaveIndicator.style.visibility = 'visible';
 		const tooltip = bootstrap.Tooltip.getInstance(autoSaveIndicator);
@@ -467,6 +502,11 @@ document.addEventListener('DOMContentLoaded', function () {
 		});
 
 		syncClipsToCache();
+
+		if (readOnly) {
+			// Still persist to temp DB for in-session navigation
+			return axios.post('/save_comments', comments).catch(() => {});
+		}
 
 		return axios.post('/save_comments', comments)
 			.then(response => {
