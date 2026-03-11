@@ -47,7 +47,8 @@ app.secret_key = os.urandom(24)
 
 
 def is_path_within(path: str, allowed_dir: str) -> bool:
-    return Path(path).resolve().is_relative_to(Path(allowed_dir).resolve())
+    """Check if path is within allowed_dir. Callers must pass an already-resolved allowed_dir."""
+    return Path(path).resolve().is_relative_to(allowed_dir)
 
 
 def get_db_path(csv_path: str) -> str:
