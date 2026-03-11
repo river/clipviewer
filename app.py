@@ -10,6 +10,7 @@ import tempfile
 import threading
 from pathlib import Path
 
+import polars as pl
 import typer
 from flask import (
     Flask,
@@ -29,7 +30,9 @@ from flask import (
 CLIPS_PER_PAGE = 6
 
 VIDEO_BASE = os.path.realpath("/")
-CSV_DIR = os.path.realpath(os.getcwd())
+FILE_DIR = os.path.realpath(os.getcwd())
+
+VIDEO_EXTENSIONS = {".avi", ".mp4", ".mov", ".mkv", ".wmv", ".flv", ".webm"}
 
 # Temp directory for converted MP4 files (for cross-browser compatibility)
 TMPDIR = tempfile.mkdtemp(prefix="clipviewer_")
@@ -49,16 +52,36 @@ def is_path_within(path: str, allowed_dir: str) -> bool:
     return Path(path).resolve().is_relative_to(allowed_dir)
 
 
-def get_db_path(csv_path: str) -> str:
-    base, _ = os.path.splitext(csv_path)
+def get_db_path(file_path: str, use_tmpdir: bool = False) -> str:
+    base, _ = os.path.splitext(file_path)
+    if use_tmpdir:
+        path_hash = hashlib.md5(file_path.encode()).hexdigest()
+        basename = os.path.basename(base)
+        return os.path.join(TMPDIR, f"{basename}_{path_hash}_clipviewer.db")
     return f"{base}_clipviewer.db"
+
+
+def detect_video_column(first_row: dict) -> str | None:
+    """Auto-detect which column contains video file paths by checking the first row."""
+    for col, value in first_row.items():
+        value = str(value).strip()
+        if not value:
+            continue
+        ext = os.path.splitext(value)[1].lower()
+        if ext not in VIDEO_EXTENSIONS:
+            continue
+        if os.path.isfile(os.path.join(VIDEO_BASE, value)):
+            return col
+    return None
 
 
 def get_db() -> sqlite3.Connection:
     """Open a DB connection from the session, or abort 400 if none loaded."""
     db_path = session.get("db_path")
     if not db_path or not os.path.isfile(db_path):
-        abort(400, description="No CSV loaded. Please load a CSV first.")
+        abort(
+            400, description="No file loaded. Please load a CSV or Parquet file first."
+        )
     conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
@@ -74,46 +97,107 @@ def index():
     return render_template("index.jinja2")
 
 
-@app.route("/load_csv", methods=["POST"])
-def load_csv():
-    csv_path = str(request.json["csv_path"])
+@app.route("/load_file", methods=["POST"])
+def load_file():
+    file_path = str(request.json["file_path"])
     metadata_fields = [
         m.strip() for m in str(request.json["metadata_fields"]).split(",") if m.strip()
     ]
+    video_path_column = "avi_path"
 
-    if not is_path_within(csv_path, CSV_DIR):
+    if not is_path_within(file_path, FILE_DIR):
         return jsonify(
-            {"status": "error", "message": "CSV path not in allowed directory"}
+            {"status": "error", "message": "File path not in allowed directory"}
         ), 403
 
-    # Skip re-processing if DB is already up-to-date
-    db_path = get_db_path(csv_path)
+    # Check write access to determine read-only mode
+    file_dir = os.path.dirname(os.path.realpath(file_path))
+    read_only = not os.access(file_dir, os.W_OK)
+
+    # Skip re-processing if DB is already up-to-date AND metadata fields match
+    db_path = get_db_path(file_path, use_tmpdir=read_only)
+    requested_meta = ",".join(metadata_fields)
     try:
-        if os.path.isfile(db_path) and os.path.getmtime(db_path) >= os.path.getmtime(csv_path):
-            session["db_path"] = db_path
-            return jsonify({"status": "success", "message": "CSV loaded successfully"})
+        if os.path.isfile(db_path) and os.path.getmtime(db_path) >= os.path.getmtime(
+            file_path
+        ):
+            with sqlite3.connect(db_path, timeout=10) as conn:
+                try:
+                    stored_meta = conn.execute(
+                        "SELECT key, value FROM meta WHERE key IN ('metadata_fields', 'source_file_path', 'video_path_column')"
+                    ).fetchall()
+                    stored = {k: v for k, v in stored_meta}
+                    if (
+                        stored.get("metadata_fields") == requested_meta
+                        and stored.get("source_file_path") == file_path
+                        and stored.get("video_path_column")
+                    ):
+                        session["db_path"] = db_path
+                        return jsonify(
+                            {
+                                "status": "success",
+                                "message": "File loaded successfully",
+                                "read_only": read_only,
+                            }
+                        )
+                except sqlite3.OperationalError:
+                    try:
+                        stored = conn.execute(
+                            "SELECT value FROM meta WHERE key = 'metadata_fields'"
+                        ).fetchone()
+                        if stored and stored[0] == requested_meta:
+                            session["db_path"] = db_path
+                            return jsonify(
+                                {
+                                    "status": "success",
+                                    "message": "File loaded successfully",
+                                    "read_only": read_only,
+                                }
+                            )
+                    except sqlite3.OperationalError:
+                        pass  # meta table missing (old DB) -- fall through to re-import
+                except Exception:
+                    pass
+
     except OSError:
         pass
 
     try:
-        # Read CSV
-        with open(csv_path, newline="") as f:
-            reader = csv.DictReader(f)
-            fieldnames = reader.fieldnames or []
-            rows = list(reader)
+        # Read CSV or Parquet using Polars
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext == ".parquet":
+            df = pl.read_parquet(file_path)
+        else:
+            df = pl.read_csv(file_path)
 
-        # Validate columns
-        required = set(metadata_fields + ["avi_path"])
-        missing = required - set(fieldnames)
-        if missing:
-            raise ValueError(f"CSV is missing columns: {', '.join(missing)}")
+        # Auto-detect video path column if avi_path is missing
+        if "avi_path" not in df.columns:
+            first_row = df.row(0, named=True) if len(df) > 0 else {}
+            detected = detect_video_column(first_row)
+            if detected is None:
+                raise ValueError(
+                    "No 'avi_path' column found, and no column could be auto-detected "
+                    "as containing video file paths. Ensure at least one column contains "
+                    "paths to existing video files with extensions: "
+                    + ", ".join(sorted(VIDEO_EXTENSIONS))
+                )
+            video_path_column = detected
+            df = df.rename({detected: "avi_path"})
+
+        fieldnames = df.columns
+        rows = df.to_dicts()
+
+        # Validate metadata columns
+        missing_meta = set(metadata_fields) - set(fieldnames)
+        if missing_meta:
+            raise ValueError(f"File is missing columns: {', '.join(missing_meta)}")
 
         # Filter rows with avi_path
         rows = [r for r in rows if r.get("avi_path")]
 
         # Check video files (first 100)
         for row in rows[:100]:
-            video_path = os.path.join(VIDEO_BASE, row["avi_path"])
+            video_path = os.path.join(VIDEO_BASE, str(row["avi_path"]))
             if not os.path.isfile(video_path):
                 raise FileNotFoundError(f"Video file not found: {video_path}")
 
@@ -121,11 +205,11 @@ def load_csv():
         clip_rows = []
         for row in rows:
             metadata = (
-                ", ".join(f"{m}: {row.get(m, '')}" for m in metadata_fields)
+                "\n".join(f"{m}: {row.get(m, '')}" for m in metadata_fields)
                 if metadata_fields
                 else ""
             )
-            clip_rows.append((row["avi_path"], metadata))
+            clip_rows.append((str(row["avi_path"]), metadata))
 
         # Create/open database and import
         with sqlite3.connect(db_path, timeout=10) as conn:
@@ -138,6 +222,24 @@ def load_csv():
                     reviewed_at TEXT DEFAULT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('metadata_fields', ?)",
+                (requested_meta,),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('source_file_path', ?)",
+                (file_path,),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('video_path_column', ?)",
+                (video_path_column,),
+            )
 
             # Upsert: update metadata, preserve existing comments
             conn.executemany(
@@ -149,8 +251,13 @@ def load_csv():
             )
 
         session["db_path"] = db_path
-
-        return jsonify({"status": "success", "message": "CSV loaded successfully"})
+        return jsonify(
+            {
+                "status": "success",
+                "message": "File loaded successfully",
+                "read_only": read_only,
+            }
+        )
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 400
 
@@ -223,15 +330,66 @@ def save_comments():
 @app.route("/export_comments")
 def export_comments():
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT avi_path, comment, reviewed_at FROM clips WHERE reviewed_at IS NOT NULL ORDER BY avi_path"
+        meta_rows = conn.execute(
+            "SELECT key, value FROM meta WHERE key IN ('source_file_path', 'video_path_column')"
         ).fetchall()
+        meta = {row["key"]: row["value"] for row in meta_rows}
+
+        source_file_path = meta.get("source_file_path")
+        video_path_column = meta.get("video_path_column")
+        if not source_file_path or not video_path_column:
+            abort(
+                400,
+                description="Missing export metadata. Reload the source file first.",
+            )
+
+        clip_rows = conn.execute(
+            "SELECT avi_path, comment, reviewed_at FROM clips"
+        ).fetchall()
+
+    if not os.path.isfile(source_file_path):
+        abort(400, description=f"Source file not found: {source_file_path}")
+
+    ext = os.path.splitext(source_file_path)[1].lower()
+    if ext == ".parquet":
+        df = pl.read_parquet(source_file_path)
+    else:
+        df = pl.read_csv(source_file_path)
+
+    source_columns = list(df.columns)
+    if video_path_column not in source_columns:
+        abort(
+            400,
+            description=f"Configured video path column '{video_path_column}' not found in source file.",
+        )
+
+    annotation_comment_col = "clipviewer_comment"
+    annotation_reviewed_col = "clipviewer_reviewed_at"
+    if (
+        annotation_comment_col in source_columns
+        or annotation_reviewed_col in source_columns
+    ):
+        abort(
+            400,
+            description="Source file already contains clipviewer export columns.",
+        )
+
+    comment_map = {
+        str(row["avi_path"]): (row["comment"], row["reviewed_at"] or "")
+        for row in clip_rows
+    }
+    source_rows = df.to_dicts()
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["avi_path", "comments", "reviewed_at"])
-    for row in rows:
-        writer.writerow([row["avi_path"], row["comment"], row["reviewed_at"] or ""])
+    writer.writerow(source_columns + [annotation_comment_col, annotation_reviewed_col])
+    for row in source_rows:
+        avi_path = row.get(video_path_column)
+        comment, reviewed_at = comment_map.get(str(avi_path), ("", ""))
+        writer.writerow(
+            ["" if row.get(col) is None else row.get(col) for col in source_columns]
+            + [comment, reviewed_at]
+        )
 
     return Response(
         buf.getvalue(),
@@ -251,13 +409,20 @@ def _is_browser_compatible(path: str) -> bool:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=codec_name,pix_fmt",
-                "-of", "csv=p=0",
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,pix_fmt",
+                "-of",
+                "csv=p=0",
                 path,
             ],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return result.stdout.strip() == "h264,yuv420p"
     except Exception:
@@ -328,17 +493,17 @@ def serve_video(filename):
 
 def main(
     port: int = typer.Option(8888, help="Port number to run the server on."),
-    csv_dir: Path = typer.Option(
+    file_dir: Path = typer.Option(
         Path.cwd(),
-        help="Allowed directory for CSV files.",
+        help="Allowed directory for CSV / Parquet files.",
         exists=True,
         file_okay=False,
         resolve_path=True,
     ),
     debug: bool = typer.Option(False, help="Enable Flask debug mode."),
 ) -> None:
-    global CSV_DIR
-    CSV_DIR = str(csv_dir)
+    global FILE_DIR
+    FILE_DIR = str(file_dir)
 
     if debug:
         app.run(host="0.0.0.0", port=port, debug=True, threaded=True)
@@ -352,20 +517,25 @@ def main(
                 super().__init__()
 
             def load_config(self):
+                if self.cfg is None:
+                    return
                 for key, value in self.options.items():
                     self.cfg.set(key, value)
 
             def load(self):
                 return self.application
 
-        GunicornApp(app, {
-            "bind": f"0.0.0.0:{port}",
-            "workers": 4,
-            "threads": 2,
-            "timeout": 300,
-            "preload_app": True,
-            "accesslog": "-",
-        }).run()
+        GunicornApp(
+            app,
+            {
+                "bind": f"0.0.0.0:{port}",
+                "workers": 4,
+                "threads": 2,
+                "timeout": 300,
+                "preload_app": True,
+                "accesslog": "-",
+            },
+        ).run()
 
 
 def cli() -> None:

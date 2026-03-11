@@ -14,14 +14,53 @@ document.addEventListener('DOMContentLoaded', function () {
 	let totalClips = 0;
 	let clipsPerPage = 0;
 	let labelOptions = []
+	let readOnly = false;
 
 	// Utility: escape HTML to prevent XSS (string-based, no DOM allocation)
 	function escapeHtml(str) {
 		return str.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 	}
 
+	function formatMetadata(str) {
+		if (!str) return '';
+		return str.split('\n').map(field => {
+			const colonIdx = field.indexOf(': ');
+			if (colonIdx === -1) return escapeHtml(field);
+			const key = field.substring(0, colonIdx);
+			const value = field.substring(colonIdx + 2);
+			return `${escapeHtml(key)}: <strong>${escapeHtml(value)}</strong>`;
+		}).join('<br>');
+	}
+
 	function releaseVideos(container) {
 		container.querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
+	}
+
+	function bindVideoLoadingStates(container) {
+		container.querySelectorAll('.video-container').forEach(videoContainer => {
+			const video = videoContainer.querySelector('video');
+			const spinner = videoContainer.querySelector('.video-spinner');
+			if (!video || !spinner) return;
+
+			if (video.readyState >= 2) {
+				spinner.classList.add('is-hidden');
+				return;
+			}
+
+			if (video.dataset.loadingBound === '1') return;
+			video.dataset.loadingBound = '1';
+
+			const hideSpinner = () => {
+				spinner.classList.add('is-hidden');
+				video.removeEventListener('loadeddata', hideSpinner);
+				video.removeEventListener('canplay', hideSpinner);
+				video.removeEventListener('error', hideSpinner);
+			};
+
+			video.addEventListener('loadeddata', hideSpinner, { once: true });
+			video.addEventListener('canplay', hideSpinner, { once: true });
+			video.addEventListener('error', hideSpinner, { once: true });
+		});
 	}
 
 	function removePreloadLinks(page) {
@@ -65,18 +104,18 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	// ------------------------
-	// csv and metadata loading
+	// file and metadata loading
 	// ------------------------
 
 	const loadForm = document.getElementById('loadForm');
-	const csvPathInput = document.getElementById('csvPathInput');
+	const filePathInput = document.getElementById('filePathInput');
 	const metadataInput = document.getElementById('metadataInput');
 	const labelOptionsInput = document.getElementById('labelOptionsInput');
 	const freeTextToggle = document.getElementById('freeTextToggle');
 
 	// Load values from URL query parameters and initialize inputs and currentPage
 	const urlParams = new URLSearchParams(window.location.search);
-	csvPathInput.value = urlParams.get('csvPath') || '';
+	filePathInput.value = urlParams.get('filePath') || '';
 	metadataInput.value = urlParams.get('metadata') || '';
 	labelOptionsInput.value = urlParams.get('labels') || '';
 	freeTextToggle.checked = urlParams.get('freeText') === 'true';
@@ -88,7 +127,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	// Update URL with current form inputs and page number
 	function updateUrlParams() {
 		const params = new URLSearchParams();
-		params.set('csvPath', csvPathInput.value);
+		params.set('filePath', filePathInput.value);
 		params.set('metadata', metadataInput.value);
 		params.set('labels', labelOptionsInput.value);
 		params.set('freeText', freeTextToggle.checked);
@@ -120,24 +159,24 @@ document.addEventListener('DOMContentLoaded', function () {
 	});
 
 	// If URL already has parameters, auto-submit the form
-	if (csvPathInput.value) {
+	if (filePathInput.value) {
 		handleFormSubmit(new Event('submit'));
 	}
 
 	function handleFormSubmit(event) {
 		event.preventDefault();
 		updateUrlParams();
-		loadCSV();
+		loadFile();
 	}
 
-	function loadCSV() {
+	function loadFile() {
 		pageCache.clear();
 		clearDomCache();
-		const csvPath = csvPathInput.value;
+		const filePath = filePathInput.value;
 		const metadataFields = metadataInput.value;
 
-		if (!csvPath) {
-			showAlert('Please enter CSV path', 'danger');
+		if (!filePath) {
+			showAlert('Please enter a file path', 'danger');
 			return;
 		}
 
@@ -145,8 +184,10 @@ document.addEventListener('DOMContentLoaded', function () {
 		showLoadingSpinner();
 		document.getElementById('clip-viewer').style.opacity = '0.1';
 
-		axios.post('/load_csv', { csv_path: csvPath, metadata_fields: metadataFields })
-			.then(() => {
+		axios.post('/load_file', { file_path: filePath, metadata_fields: metadataFields })
+			.then((response) => {
+				readOnly = response.data.read_only || false;
+				applyReadOnlyState();
 				fetchClips();
 			})
 			.catch(error => {
@@ -163,14 +204,44 @@ document.addEventListener('DOMContentLoaded', function () {
 		labelOptions = ['', ...labelOptionsInput.value.split(',').filter(s => s.trim() !== '')];
 	}
 
+	// Called asynchronously (from the /load_file response handler), so
+	// saveButton and autoSaveIndicator are always initialised by call time.
+	function applyReadOnlyState() {
+		saveButton.disabled = readOnly;
+		saveButton.classList.toggle('btn-success', !readOnly);
+		saveButton.classList.toggle('btn-secondary', readOnly);
+
+		autoSaveIndicator.style.visibility = readOnly ? 'visible' : 'hidden';
+		autoSaveIndicator.querySelector('i').className = readOnly ? 'bi bi-cloud-slash' : 'bi bi-cloud-check';
+
+		const tooltipText = readOnly
+			? 'Saving is not possible — no write access to file directory'
+			: 'Auto-saved';
+		const tooltip = bootstrap.Tooltip.getInstance(autoSaveIndicator);
+		if (tooltip) {
+			tooltip.setContent({ '.tooltip-inner': tooltipText });
+		} else if (readOnly) {
+			autoSaveIndicator.setAttribute('title', tooltipText);
+			new bootstrap.Tooltip(autoSaveIndicator);
+		}
+
+		if (readOnly) {
+			showAlert('Read-only mode: the file directory is not writable. Comments will be stored temporarily but will not persist.', 'warning');
+		}
+	}
+
 	function showLoadingSpinner() {
 		// Create and show the loading spinner
+		const spinnerOverlay = document.createElement('div');
+		spinnerOverlay.id = 'loading-spinner';
+
 		const spinner = document.createElement('div');
-		spinner.id = 'loading-spinner';
 		spinner.className = 'spinner-border text-primary';
 		spinner.setAttribute('role', 'status');
-		spinner.innerHTML = '<span class="sr-only">Loading...</span>';
-		document.body.appendChild(spinner);
+		spinner.setAttribute('aria-label', 'Loading');
+
+		spinnerOverlay.appendChild(spinner);
+		document.body.appendChild(spinnerOverlay);
 	}
 
 	function hideLoadingSpinner() {
@@ -305,6 +376,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		clipGrid.appendChild(domCache.get(currentPage));
 		domCache.delete(currentPage);
 		removePreloadLinks(currentPage);
+		bindVideoLoadingStates(clipGrid);
 		clipGrid.querySelectorAll('video').forEach(v => { v.muted = true; v.play().catch(() => {}); });
 
 		applyPageData(pageCache.get(currentPage));
@@ -402,10 +474,13 @@ document.addEventListener('DOMContentLoaded', function () {
 			<div class="col">
 				<div class="card h-100">
 					<div class="video-container">
+						<div class="video-spinner" aria-hidden="true">
+							<div class="spinner-border spinner-border-sm" role="status"></div>
+						</div>
 						<video src="/video${escapeHtml(clip.avi_path)}" autoplay loop muted></video>
 					</div>
 					<div class="card-body ${escapeHtml(clip.clip_reviewed)}">
-						<p class="card-text">${escapeHtml(clip.metadata)}</p>
+						<p class="card-text">${formatMetadata(clip.metadata)}</p>
 						${commentHtml}
 					</div>
 				</div>
@@ -450,6 +525,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	const autoSaveIndicator = document.getElementById('autoSaveIndicator');
 
 	function showAutoSaveIndicator() {
+		if (readOnly) return;
 		const timeStr = new Date().toLocaleTimeString('en-GB', { hour12: false });
 		autoSaveIndicator.style.visibility = 'visible';
 		const tooltip = bootstrap.Tooltip.getInstance(autoSaveIndicator);
@@ -470,15 +546,15 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		return axios.post('/save_comments', comments)
 			.then(response => {
+				if (readOnly) return;
 				if (silent) {
 					showAutoSaveIndicator();
 				} else {
-					const dbPath = response.data.db_path;
-					showAlert(`Comments saved to ${dbPath}`);
+					showAlert(`Comments saved to ${response.data.db_path}`);
 				}
 			})
 			.catch(() => {
-				if (!silent) showAlert('Error saving comments', 'danger');
+				if (!readOnly && !silent) showAlert('Error saving comments', 'danger');
 			});
 	}
 
@@ -537,6 +613,7 @@ document.addEventListener('DOMContentLoaded', function () {
 			const clipHtml = videoCardTemplate(clip, index);
 			clipGrid.insertAdjacentHTML('beforeend', clipHtml);
 		});
+		bindVideoLoadingStates(clipGrid);
 		clipGrid.style.minHeight = '';
 	}
 
