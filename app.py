@@ -143,23 +143,6 @@ def load_csv():
                 clip_rows,
             )
 
-            # Migrate existing _comments.csv if present
-            base, ext = os.path.splitext(csv_path)
-            comments_csv_path = f"{base}_comments{ext}"
-            if os.path.isfile(comments_csv_path):
-                with open(comments_csv_path, newline="") as f:
-                    comment_reader = csv.DictReader(f)
-                    updates = [
-                        (crow.get("comments", ""), crow.get("filename", ""))
-                        for crow in comment_reader
-                        if crow.get("filename") and crow.get("comments")
-                    ]
-                if updates:
-                    conn.executemany(
-                        "UPDATE clips SET comment = ? WHERE filename = ?",
-                        updates,
-                    )
-
         session["db_path"] = db_path
 
         return jsonify({"status": "success", "message": "CSV loaded successfully"})
