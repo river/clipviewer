@@ -166,34 +166,32 @@ document.addEventListener('DOMContentLoaded', function () {
 		labelOptions = ['', ...labelOptionsInput.value.split(',').filter(s => s.trim() !== '')];
 	}
 
+	// Declared early; assigned after DOM refs are created below.
+	// Only called asynchronously (from the /load_file response handler),
+	// so the references are always initialised by the time this runs.
+	let _saveButton, _autoSaveIndicator;
+
 	function applyReadOnlyState() {
-		const saveBtn = document.getElementById('saveButton');
-		const indicator = document.getElementById('autoSaveIndicator');
+		_saveButton.disabled = readOnly;
+		_saveButton.classList.toggle('btn-success', !readOnly);
+		_saveButton.classList.toggle('btn-secondary', readOnly);
+
+		_autoSaveIndicator.style.visibility = readOnly ? 'visible' : 'hidden';
+		_autoSaveIndicator.querySelector('i').className = readOnly ? 'bi bi-cloud-slash' : 'bi bi-cloud-check';
+
+		const tooltipText = readOnly
+			? 'Saving is not possible — no write access to file directory'
+			: 'Auto-saved';
+		const tooltip = bootstrap.Tooltip.getInstance(_autoSaveIndicator);
+		if (tooltip) {
+			tooltip.setContent({ '.tooltip-inner': tooltipText });
+		} else if (readOnly) {
+			_autoSaveIndicator.setAttribute('title', tooltipText);
+			new bootstrap.Tooltip(_autoSaveIndicator);
+		}
 
 		if (readOnly) {
-			saveBtn.disabled = true;
-			saveBtn.classList.remove('btn-success');
-			saveBtn.classList.add('btn-secondary');
-			indicator.style.visibility = 'visible';
-			indicator.querySelector('i').className = 'bi bi-cloud-slash';
-			const tooltip = bootstrap.Tooltip.getInstance(indicator);
-			if (tooltip) {
-				tooltip.setContent({ '.tooltip-inner': 'Saving is not possible — no write access to file directory' });
-			} else {
-				indicator.setAttribute('title', 'Saving is not possible — no write access to file directory');
-				new bootstrap.Tooltip(indicator);
-			}
 			showAlert('Read-only mode: the file directory is not writable. Comments will be stored temporarily but will not persist.', 'warning');
-		} else {
-			saveBtn.disabled = false;
-			saveBtn.classList.remove('btn-secondary');
-			saveBtn.classList.add('btn-success');
-			indicator.style.visibility = 'hidden';
-			indicator.querySelector('i').className = 'bi bi-cloud-check';
-			const tooltip = bootstrap.Tooltip.getInstance(indicator);
-			if (tooltip) {
-				tooltip.setContent({ '.tooltip-inner': 'Auto-saved' });
-			}
 		}
 	}
 
@@ -227,6 +225,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	const jumpToGo = document.getElementById('jumpToGo');
 	const progressClickArea = document.getElementById('progressClickArea');
 	const saveButton = document.getElementById('saveButton');
+	_saveButton = saveButton;
 	const pageInfo = document.getElementById('pageInfo');
 	const progressBar = document.getElementById('progressBar');
 	const clipGrid = document.getElementById('clipGrid');
@@ -482,6 +481,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	const autoSaveIndicator = document.getElementById('autoSaveIndicator');
+	_autoSaveIndicator = autoSaveIndicator;
 
 	function showAutoSaveIndicator() {
 		if (readOnly) return;
@@ -503,22 +503,17 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		syncClipsToCache();
 
-		if (readOnly) {
-			// Still persist to temp DB for in-session navigation
-			return axios.post('/save_comments', comments).catch(() => {});
-		}
-
 		return axios.post('/save_comments', comments)
 			.then(response => {
+				if (readOnly) return;
 				if (silent) {
 					showAutoSaveIndicator();
 				} else {
-					const dbPath = response.data.db_path;
-					showAlert(`Comments saved to ${dbPath}`);
+					showAlert(`Comments saved to ${response.data.db_path}`);
 				}
 			})
 			.catch(() => {
-				if (!silent) showAlert('Error saving comments', 'danger');
+				if (!readOnly && !silent) showAlert('Error saving comments', 'danger');
 			});
 	}
 

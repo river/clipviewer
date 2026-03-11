@@ -116,7 +116,7 @@ def load_file():
     try:
         if os.path.isfile(db_path) and os.path.getmtime(db_path) >= os.path.getmtime(file_path):
             session["db_path"] = db_path
-            session["read_only"] = read_only
+    
             return jsonify({"status": "success", "message": "File loaded successfully", "read_only": read_only})
     except OSError:
         pass
@@ -191,7 +191,7 @@ def load_file():
             )
 
         session["db_path"] = db_path
-        session["read_only"] = read_only
+
 
         return jsonify({"status": "success", "message": "File loaded successfully", "read_only": read_only})
     except Exception as e:
