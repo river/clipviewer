@@ -2,8 +2,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	// State variables
 	let currentClips = [];
-	let nextClips = [];
-	let nextClipElements = [];
+	const pageCache = new Map();
+	const MAX_CACHE_SIZE = 7;
 	let currentPage = 0;
 	let totalPages = 0;
 	let totalClips = 0;
@@ -58,12 +58,9 @@ document.addEventListener('DOMContentLoaded', function () {
 				if (el) clip.comment = el.value;
 			});
 			updateUI();
-			// Rebuild preloaded next page elements with new widget type
-			nextClipElements.forEach(el => el.remove());
-			nextClipElements.length = 0;
-			if (nextClips.length > 0) {
-				createHiddenElements(nextClips);
-			}
+			// Clear cache so preloaded pages use the new widget type
+			pageCache.clear();
+			preloadAdjacentPages();
 		}
 	});
 
@@ -79,6 +76,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function loadCSV() {
+		pageCache.clear();
 		const csvPath = csvPathInput.value;
 		const metadataFields = metadataInput.value;
 
@@ -149,26 +147,44 @@ document.addEventListener('DOMContentLoaded', function () {
 	});
 	document.addEventListener('keydown', handleKeydown);
 
-	function fetchClips() {
-		axios.get(`/get_clips?page=${currentPage}`)
-			.then(response => {
-				currentClips = response.data.clips;
-				totalPages = response.data.total_pages;
-				totalClips = response.data.total_clips;
-				clipsPerPage = response.data.clips_per_page;
-				updateUI();
-				preloadNextPage();
-			});
+	function getCachedOrFetch(page) {
+		if (pageCache.has(page)) {
+			return Promise.resolve(pageCache.get(page));
+		}
+		return axios.get(`/get_clips?page=${page}`).then(response => {
+			pageCache.set(page, response.data);
+			evictCache(page);
+			return response.data;
+		});
 	}
 
-	function preloadNextPage() {
-		if (currentPage < totalPages - 1) {
-			axios.get(`/get_clips?page=${currentPage + 1}`)
-				.then(response => {
-					nextClips = response.data.clips;
-					createHiddenElements(nextClips);
-				});
+	function evictCache(nearPage) {
+		if (pageCache.size <= MAX_CACHE_SIZE) return;
+		const pages = Array.from(pageCache.keys());
+		pages.sort((a, b) => Math.abs(b - nearPage) - Math.abs(a - nearPage));
+		while (pageCache.size > MAX_CACHE_SIZE) {
+			pageCache.delete(pages.shift());
 		}
+	}
+
+	function preloadAdjacentPages() {
+		if (currentPage > 0 && !pageCache.has(currentPage - 1)) {
+			getCachedOrFetch(currentPage - 1);
+		}
+		if (currentPage < totalPages - 1 && !pageCache.has(currentPage + 1)) {
+			getCachedOrFetch(currentPage + 1);
+		}
+	}
+
+	function fetchClips() {
+		getCachedOrFetch(currentPage).then(data => {
+			currentClips = data.clips;
+			totalPages = data.total_pages;
+			totalClips = data.total_clips;
+			clipsPerPage = data.clips_per_page;
+			updateUI();
+			preloadAdjacentPages();
+		});
 	}
 
 	const videoCardTemplate = (clip, index) => {
@@ -201,72 +217,13 @@ document.addEventListener('DOMContentLoaded', function () {
 		`;
 	}
 
-	function createHiddenElements(clips) {
-		nextClipElements = [];
-		clips.forEach((clip, index) => {
-			const template = document.createElement('template');
-			template.innerHTML = videoCardTemplate(clip, index).trim();
-			const clipElement = template.content.firstChild;
-			clipElement.style.display = 'none';
-			nextClipElements.push(clipElement);
-			clipGrid.appendChild(clipElement);
-		});
-	}
-
 	function nextPage() {
 		if (currentPage < totalPages - 1) {
 			saveComments();
 			currentPage++;
 			updateUrlParams();
-			if (nextClips.length > 0 && nextClipElements.length > 0) {
-				swapInNextPage();
-			} else {
-				fetchClips();
-			}
+			fetchClips();
 		}
-	}
-
-	function swapInNextPage() {
-		// Remove current clips from DOM and clear from memory
-		Array.from(clipGrid.children).forEach(child => {
-			if (!nextClipElements.includes(child)) {
-				// Remove event listeners
-				child.onclick = null;
-				child.onmouseover = null;
-				child.onmouseout = null;
-
-				// Clear video source and pause playback
-				const video = child.querySelector('video');
-				if (video) {
-					video.pause();
-					video.src = '';
-					video.load();
-				}
-
-				// Remove child from DOM
-				child.remove();
-
-				// Clear any references in the child
-				if (child.player) {
-					child.player.dispose();
-					child.player = null;
-				}
-			}
-		});
-
-		// Show next clips
-		nextClipElements.forEach(element => {
-			element.style.display = '';
-		});
-
-		// Clear references
-		currentClips.length = 0;
-		currentClips = nextClips.slice(); // Create a shallow copy
-		nextClips.length = 0;
-		nextClipElements.length = 0;
-
-		updatePageInfo();
-		preloadNextPage();
 	}
 
 	function prevPage() {
@@ -306,11 +263,15 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		const comments = currentClips.map((clip, index) => {
 			const el = document.getElementById(`comment-${index}`);
-			return {
-				avi_path: clip.avi_path,
-				comment: el ? el.value : ''
-			};
+			const comment = el ? el.value : '';
+			clip.comment = comment;
+			return { avi_path: clip.avi_path, comment };
 		});
+
+		// Sync updated comments into the cache
+		if (pageCache.has(currentPage)) {
+			pageCache.get(currentPage).clips = currentClips.slice();
+		}
 
 		return axios.post('/save_comments', comments)
 			.then(response => {
@@ -359,6 +320,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	function updateUI() {
 		updatePageInfo();
 
+		clipGrid.querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
 		clipGrid.innerHTML = '';
 		currentClips.forEach((clip, index) => {
 			const clipHtml = videoCardTemplate(clip, index);
