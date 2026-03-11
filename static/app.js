@@ -23,12 +23,14 @@ document.addEventListener('DOMContentLoaded', function () {
 	const csvPathInput = document.getElementById('csvPathInput');
 	const metadataInput = document.getElementById('metadataInput');
 	const labelOptionsInput = document.getElementById('labelOptionsInput');
+	const freeTextToggle = document.getElementById('freeTextToggle');
 
 	// Load values from URL query parameters and initialize inputs and currentPage
 	const urlParams = new URLSearchParams(window.location.search);
 	csvPathInput.value = urlParams.get('csvPath') || '';
 	metadataInput.value = urlParams.get('metadata') || '';
 	labelOptionsInput.value = urlParams.get('labels') || '';
+	freeTextToggle.checked = urlParams.get('freeText') === 'true';
 	const urlPage = urlParams.get('page');
 	if (urlPage) {
 		currentPage = Number(urlPage);
@@ -40,11 +42,30 @@ document.addEventListener('DOMContentLoaded', function () {
 		params.set('csvPath', csvPathInput.value);
 		params.set('metadata', metadataInput.value);
 		params.set('labels', labelOptionsInput.value);
+		params.set('freeText', freeTextToggle.checked);
 		params.set('page', currentPage);
 		window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
 	}
 
 	loadForm.addEventListener('submit', handleFormSubmit);
+
+	freeTextToggle.addEventListener('change', function () {
+		updateUrlParams();
+		if (currentClips.length > 0) {
+			// Read current comment values from DOM before re-rendering
+			currentClips.forEach(clip => {
+				const el = document.getElementById(`comment-${clip.filename}`);
+				if (el) clip.comment = el.value;
+			});
+			updateUI();
+			// Rebuild preloaded next page elements with new widget type
+			nextClipElements.forEach(el => el.remove());
+			nextClipElements.length = 0;
+			if (nextClips.length > 0) {
+				createHiddenElements(nextClips);
+			}
+		}
+	});
 
 	// If URL already has parameters, auto-submit the form
 	if (csvPathInput.value) {
@@ -85,8 +106,8 @@ document.addEventListener('DOMContentLoaded', function () {
 				document.getElementById('clip-viewer').style.opacity = '1';
 			});
 
-		// load label options
-		labelOptions = labelOptionsInput.value.split(',');
+		// load label options: filter out empty entries, then prepend a single blank option
+		labelOptions = ['', ...labelOptionsInput.value.split(',').filter(s => s.trim() !== '')];
 	}
 
 	function showLoadingSpinner() {
@@ -151,12 +172,18 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	const videoCardTemplate = (clip) => {
-		const optionsHtml = labelOptions.map((optionText) => {
-			const escaped = escapeHtml(optionText);
-			return clip.comment === optionText
-				? `<option value="${escaped}" selected>${escaped}</option>`
-				: `<option value="${escaped}">${escaped}</option>`;
-		}).join('');
+		let commentHtml;
+		if (freeTextToggle.checked) {
+			commentHtml = `<input type="text" id="comment-${clip.filename}" class="form-control" value="${escapeHtml(clip.comment)}">`;
+		} else {
+			const optionsHtml = labelOptions.map((optionText) => {
+				const escaped = escapeHtml(optionText);
+				return clip.comment === optionText
+					? `<option value="${escaped}" selected>${escaped}</option>`
+					: `<option value="${escaped}">${escaped}</option>`;
+			}).join('');
+			commentHtml = `<select id="comment-${clip.filename}" class="form-select">${optionsHtml}</select>`;
+		}
 
 		return `
 			<div class="col">
@@ -166,9 +193,7 @@ document.addEventListener('DOMContentLoaded', function () {
 					</div>
 					<div class="card-body ${escapeHtml(clip.clip_reviewed)}">
 						<p class="card-text">${escapeHtml(clip.metadata)}</p>
-						<select id="comment-${clip.filename}" class="form-select">
-							${optionsHtml}
-						</select>
+						${commentHtml}
 					</div>
 				</div>
 			</div>
@@ -276,7 +301,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function saveComments() {
-		if (currentClips.length === 0) return;
+		if (currentClips.length === 0) return Promise.resolve();
 
 		const comments = currentClips.map(clip => {
 			const el = document.getElementById(`comment-${clip.filename}`);
@@ -286,7 +311,7 @@ document.addEventListener('DOMContentLoaded', function () {
 			};
 		});
 
-		axios.post('/save_comments', comments)
+		return axios.post('/save_comments', comments)
 			.then(response => {
 				showAlert('Comments saved');
 			})
