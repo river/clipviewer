@@ -50,4 +50,3 @@
 - Videos are automatically converted to H.264 MP4 for cross-browser compatibility. This requires `ffmpeg` to be installed.
 - Annotations are stored in a SQLite database alongside the input CSV file (e.g., `echoes_clipviewer.db`). Use the "Export CSV" button to download comments as a CSV file.
 - Comments are preserved when reloading the same CSV — only video paths and metadata are updated.
-- Existing `_comments.csv` files are automatically imported on first load.

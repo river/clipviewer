@@ -57,6 +57,12 @@ document.addEventListener('DOMContentLoaded', function () {
 		clipsPerPage = data.clips_per_page;
 	}
 
+	function syncClipsToCache() {
+		if (pageCache.has(currentPage)) {
+			pageCache.get(currentPage).clips = currentClips.map(c => ({...c}));
+		}
+	}
+
 	// ------------------------
 	// csv and metadata loading
 	// ------------------------
@@ -305,6 +311,27 @@ document.addEventListener('DOMContentLoaded', function () {
 		fetchClipsFallback();
 	}
 
+	function markDisplayedClipsReviewed() {
+		const unreviewedPaths = currentClips
+			.filter(c => c.clip_reviewed !== 'reviewed')
+			.map(c => c.avi_path);
+		if (unreviewedPaths.length === 0) return;
+
+		// Update local state synchronously (before currentPage changes)
+		currentClips.forEach(clip => {
+			clip.clip_reviewed = 'reviewed';
+		});
+		syncClipsToCache();
+
+		// Update DOM so saveCurrentDom captures the reviewed state
+		clipGrid.querySelectorAll('.card-body:not(.reviewed)').forEach(el => {
+			el.classList.add('reviewed');
+		});
+
+		// Fire-and-forget POST to server
+		axios.post('/mark_reviewed', unreviewedPaths).catch(() => {});
+	}
+
 	function fetchClipsFallback() {
 		// Fall back to JSON cache or network fetch
 		getCachedOrFetch(currentPage).then(data => {
@@ -347,6 +374,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function navigateToPage(page) {
+		markDisplayedClipsReviewed();
 		saveComments();
 		saveCurrentDom();
 		currentPage = page;
@@ -392,10 +420,7 @@ document.addEventListener('DOMContentLoaded', function () {
 			return { avi_path: clip.avi_path, comment };
 		});
 
-		// Sync updated comments back into the cache
-		if (pageCache.has(currentPage)) {
-			pageCache.get(currentPage).clips = currentClips.map(c => ({...c}));
-		}
+		syncClipsToCache();
 
 		return axios.post('/save_comments', comments)
 			.then(response => {
