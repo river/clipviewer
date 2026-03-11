@@ -210,6 +210,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (currentPage < totalPages - 1) pages.push(currentPage + 1);
 		pages.forEach(page => {
 			getCachedOrFetch(page).then(data => {
+				if (Math.abs(page - currentPage) > 1) return; // stale after navigation
 				if (!domCache.has(page)) {
 					prerenderDom(page, data);
 				}
@@ -229,8 +230,7 @@ document.addEventListener('DOMContentLoaded', function () {
 				video.removeAttribute('autoplay');
 				// Prefetch video so it's in browser cache when swapped in
 				const link = document.createElement('link');
-				link.rel = 'preload';
-				link.as = 'video';
+				link.rel = 'prefetch';
 				link.href = video.src;
 				document.head.appendChild(link);
 				links.push(link);
@@ -319,33 +319,25 @@ document.addEventListener('DOMContentLoaded', function () {
 		`;
 	}
 
+	function navigateToPage(page) {
+		saveComments();
+		saveCurrentDom();
+		currentPage = page;
+		updateUrlParams();
+		fetchClips();
+	}
+
 	function nextPage() {
-		if (currentPage < totalPages - 1) {
-			saveComments();
-			saveCurrentDom();
-			currentPage++;
-			updateUrlParams();
-			fetchClips();
-		}
+		if (currentPage < totalPages - 1) navigateToPage(currentPage + 1);
 	}
 
 	function prevPage() {
-		if (currentPage > 0) {
-			saveComments();
-			saveCurrentDom();
-			currentPage--;
-			updateUrlParams();
-			fetchClips();
-		}
+		if (currentPage > 0) navigateToPage(currentPage - 1);
 	}
 
 	function goToPage(page) {
 		if (page >= 0 && page <= (totalPages - 1)) {
-			saveComments();
-			saveCurrentDom();
-			currentPage = page;
-			updateUrlParams();
-			fetchClips();
+			navigateToPage(page);
 		} else {
 			alert("Page number is not in range");
 		}
