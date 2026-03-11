@@ -49,7 +49,7 @@ The app can be configured via environment variables:
 
 ## Notes
 
-- Currently videos only load and display properly in Safari. Videos do not load in Chrome for an unknown reason (pull requests welcome).
+- Videos are automatically converted to H.264 MP4 for cross-browser compatibility. This requires `ffmpeg` to be installed.
 - Annotations are stored in a SQLite database alongside the input CSV file (e.g., `echoes_clipviewer.db`). Use the "Export CSV" button to download comments as a CSV file.
 - Comments are preserved when reloading the same CSV — only video paths and metadata are updated.
 - Existing `_comments.csv` files are automatically imported on first load.
