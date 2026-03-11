@@ -127,19 +127,18 @@ def load_csv():
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS clips (
                     id INTEGER PRIMARY KEY,
-                    avi_path TEXT NOT NULL,
-                    filename TEXT NOT NULL UNIQUE,
+                    avi_path TEXT NOT NULL UNIQUE,
+                    filename TEXT NOT NULL DEFAULT '',
                     metadata TEXT NOT NULL DEFAULT '',
                     comment TEXT NOT NULL DEFAULT ''
                 )
             """)
 
-            # Upsert: update avi_path and metadata, preserve existing comments
+            # Upsert: update metadata, preserve existing comments
             conn.executemany(
                 """INSERT INTO clips (avi_path, filename, metadata)
                    VALUES (?, ?, ?)
-                   ON CONFLICT(filename) DO UPDATE SET
-                       avi_path = excluded.avi_path,
+                   ON CONFLICT(avi_path) DO UPDATE SET
                        metadata = excluded.metadata""",
                 clip_rows,
             )
@@ -186,7 +185,7 @@ def get_clips():
             "metadata": row["metadata"],
             "clip_reviewed": "reviewed" if row["comment"] else "",
             "comment": row["comment"],
-            "filename": row["filename"],
+            "avi_path": row["avi_path"],
         }
         for row in rows
     ]
@@ -206,12 +205,12 @@ def get_clips():
 @app.route("/save_comments", methods=["POST"])
 def save_comments():
     updates = [
-        (item["comment"].replace("\n", " ").replace("\r", ""), item["filename"])
+        (item["comment"].replace("\n", " ").replace("\r", ""), item["avi_path"])
         for item in request.json
     ]
     with get_db() as conn:
         conn.executemany(
-            "UPDATE clips SET comment = ? WHERE filename = ?",
+            "UPDATE clips SET comment = ? WHERE avi_path = ?",
             updates,
         )
 
@@ -222,14 +221,14 @@ def save_comments():
 def export_comments():
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT filename, comment FROM clips WHERE comment != '' ORDER BY filename"
+            "SELECT avi_path, comment FROM clips WHERE comment != '' ORDER BY avi_path"
         ).fetchall()
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["filename", "comments"])
+    writer.writerow(["avi_path", "comments"])
     for row in rows:
-        writer.writerow([row["filename"], row["comment"]])
+        writer.writerow([row["avi_path"], row["comment"]])
 
     return Response(
         buf.getvalue(),

@@ -54,7 +54,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (currentClips.length > 0) {
 			// Read current comment values from DOM before re-rendering
 			currentClips.forEach(clip => {
-				const el = document.getElementById(`comment-${clip.filename}`);
+				const el = document.getElementById(`comment-${escapeHtml(clip.avi_path)}`);
 				if (el) clip.comment = el.value;
 			});
 			updateUI();
@@ -174,7 +174,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	const videoCardTemplate = (clip) => {
 		let commentHtml;
 		if (freeTextToggle.checked) {
-			commentHtml = `<input type="text" id="comment-${clip.filename}" class="form-control" value="${escapeHtml(clip.comment)}">`;
+			commentHtml = `<input type="text" id="comment-${escapeHtml(clip.avi_path)}" class="form-control" value="${escapeHtml(clip.comment)}">`;
 		} else {
 			const optionsHtml = labelOptions.map((optionText) => {
 				const escaped = escapeHtml(optionText);
@@ -182,14 +182,14 @@ document.addEventListener('DOMContentLoaded', function () {
 					? `<option value="${escaped}" selected>${escaped}</option>`
 					: `<option value="${escaped}">${escaped}</option>`;
 			}).join('');
-			commentHtml = `<select id="comment-${clip.filename}" class="form-select">${optionsHtml}</select>`;
+			commentHtml = `<select id="comment-${escapeHtml(clip.avi_path)}" class="form-select">${optionsHtml}</select>`;
 		}
 
 		return `
 			<div class="col">
 				<div class="card h-100">
 					<div class="video-container">
-						<video src="/video${clip.video_path}" autoplay loop muted></video>
+						<video src="/video${clip.avi_path}" autoplay loop muted></video>
 					</div>
 					<div class="card-body ${escapeHtml(clip.clip_reviewed)}">
 						<p class="card-text">${escapeHtml(clip.metadata)}</p>
@@ -304,9 +304,9 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (currentClips.length === 0) return Promise.resolve();
 
 		const comments = currentClips.map(clip => {
-			const el = document.getElementById(`comment-${clip.filename}`);
+			const el = document.getElementById(`comment-${clip.avi_path}`);
 			return {
-				filename: clip.filename,
+				avi_path: clip.avi_path,
 				comment: el ? el.value : ''
 			};
 		});
