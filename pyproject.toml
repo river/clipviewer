@@ -7,3 +7,8 @@ dependencies = ["flask"]
 
 [project.scripts]
 clipviewer = "app:main"
+
+[dependency-groups]
+dev = [
+    "ty>=0.0.21",
+]
