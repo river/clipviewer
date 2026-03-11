@@ -218,7 +218,7 @@ def save_comments():
 def export_comments():
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT avi_path, comment, reviewed_at FROM clips WHERE comment != '' ORDER BY avi_path"
+            "SELECT avi_path, comment, reviewed_at FROM clips WHERE reviewed_at IS NOT NULL ORDER BY avi_path"
         ).fetchall()
 
     buf = io.StringIO()
