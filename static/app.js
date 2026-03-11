@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	const MAX_CACHE_SIZE = 7;
 	const domCache = new Map();
 	const MAX_DOM_CACHE_SIZE = 3;
+	const preloadLinks = new Map();
 	let currentPage = 0;
 	let totalPages = 0;
 	let totalClips = 0;
@@ -21,9 +22,19 @@ document.addEventListener('DOMContentLoaded', function () {
 		container.querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
 	}
 
+	function removePreloadLinks(page) {
+		const links = preloadLinks.get(page);
+		if (links) {
+			links.forEach(link => link.remove());
+			preloadLinks.delete(page);
+		}
+	}
+
 	function clearDomCache() {
 		domCache.forEach(frag => releaseVideos(frag));
 		domCache.clear();
+		preloadLinks.forEach(links => links.forEach(link => link.remove()));
+		preloadLinks.clear();
 	}
 
 	function evictMap(map, maxSize, onEvict) {
@@ -33,7 +44,7 @@ document.addEventListener('DOMContentLoaded', function () {
 				const dist = Math.abs(key - currentPage);
 				if (dist > maxDist) { maxDist = dist; farthest = key; }
 			}
-			if (onEvict) onEvict(map.get(farthest));
+			if (onEvict) onEvict(map.get(farthest), farthest);
 			map.delete(farthest);
 		}
 	}
@@ -199,6 +210,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (currentPage < totalPages - 1) pages.push(currentPage + 1);
 		pages.forEach(page => {
 			getCachedOrFetch(page).then(data => {
+				if (Math.abs(page - currentPage) > 1) return; // stale after navigation
 				if (!domCache.has(page)) {
 					prerenderDom(page, data);
 				}
@@ -208,21 +220,33 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	function prerenderDom(page, data) {
 		const fragment = document.createDocumentFragment();
+		const links = [];
 		data.clips.forEach((clip, index) => {
 			const wrapper = document.createElement('template');
 			wrapper.innerHTML = videoCardTemplate(clip, index).trim();
 			const el = wrapper.content.firstChild;
-			// Don't autoplay videos that aren't visible yet
 			const video = el.querySelector('video');
-			if (video) video.removeAttribute('autoplay');
+			if (video) {
+				video.removeAttribute('autoplay');
+				// Prefetch video so it's in browser cache when swapped in
+				const link = document.createElement('link');
+				link.rel = 'prefetch';
+				link.href = video.src;
+				document.head.appendChild(link);
+				links.push(link);
+			}
 			fragment.appendChild(el);
 		});
+		preloadLinks.set(page, links);
 		domCache.set(page, fragment);
 		evictDomCache();
 	}
 
 	function evictDomCache() {
-		evictMap(domCache, MAX_DOM_CACHE_SIZE, frag => releaseVideos(frag));
+		evictMap(domCache, MAX_DOM_CACHE_SIZE, (frag, key) => {
+			releaseVideos(frag);
+			removePreloadLinks(key);
+		});
 	}
 
 	function saveCurrentDom() {
@@ -241,6 +265,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (domCache.has(currentPage) && pageCache.has(currentPage)) {
 			clipGrid.appendChild(domCache.get(currentPage));
 			domCache.delete(currentPage);
+			removePreloadLinks(currentPage);
 			clipGrid.querySelectorAll('video').forEach(v => { v.muted = true; v.play().catch(() => {}); });
 
 			applyPageData(pageCache.get(currentPage));
@@ -294,33 +319,25 @@ document.addEventListener('DOMContentLoaded', function () {
 		`;
 	}
 
+	function navigateToPage(page) {
+		saveComments();
+		saveCurrentDom();
+		currentPage = page;
+		updateUrlParams();
+		fetchClips();
+	}
+
 	function nextPage() {
-		if (currentPage < totalPages - 1) {
-			saveComments();
-			saveCurrentDom();
-			currentPage++;
-			updateUrlParams();
-			fetchClips();
-		}
+		if (currentPage < totalPages - 1) navigateToPage(currentPage + 1);
 	}
 
 	function prevPage() {
-		if (currentPage > 0) {
-			saveComments();
-			saveCurrentDom();
-			currentPage--;
-			updateUrlParams();
-			fetchClips();
-		}
+		if (currentPage > 0) navigateToPage(currentPage - 1);
 	}
 
 	function goToPage(page) {
 		if (page >= 0 && page <= (totalPages - 1)) {
-			saveComments();
-			saveCurrentDom();
-			currentPage = page;
-			updateUrlParams();
-			fetchClips();
+			navigateToPage(page);
 		} else {
 			alert("Page number is not in range");
 		}
