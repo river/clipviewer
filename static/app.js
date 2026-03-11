@@ -53,8 +53,8 @@ document.addEventListener('DOMContentLoaded', function () {
 		updateUrlParams();
 		if (currentClips.length > 0) {
 			// Read current comment values from DOM before re-rendering
-			currentClips.forEach(clip => {
-				const el = document.getElementById(`comment-${clip.filename}`);
+			currentClips.forEach((clip, index) => {
+				const el = document.getElementById(`comment-${index}`);
 				if (el) clip.comment = el.value;
 			});
 			updateUI();
@@ -171,10 +171,11 @@ document.addEventListener('DOMContentLoaded', function () {
 		}
 	}
 
-	const videoCardTemplate = (clip) => {
+	const videoCardTemplate = (clip, index) => {
+		const commentId = `comment-${index}`;
 		let commentHtml;
 		if (freeTextToggle.checked) {
-			commentHtml = `<input type="text" id="comment-${clip.filename}" class="form-control" value="${escapeHtml(clip.comment)}">`;
+			commentHtml = `<input type="text" id="${commentId}" class="form-control" value="${escapeHtml(clip.comment)}">`;
 		} else {
 			const optionsHtml = labelOptions.map((optionText) => {
 				const escaped = escapeHtml(optionText);
@@ -182,14 +183,14 @@ document.addEventListener('DOMContentLoaded', function () {
 					? `<option value="${escaped}" selected>${escaped}</option>`
 					: `<option value="${escaped}">${escaped}</option>`;
 			}).join('');
-			commentHtml = `<select id="comment-${clip.filename}" class="form-select">${optionsHtml}</select>`;
+			commentHtml = `<select id="${commentId}" class="form-select">${optionsHtml}</select>`;
 		}
 
 		return `
 			<div class="col">
 				<div class="card h-100">
 					<div class="video-container">
-						<video src="/video${clip.video_path}" autoplay loop muted></video>
+						<video src="/video${escapeHtml(clip.avi_path)}" autoplay loop muted></video>
 					</div>
 					<div class="card-body ${escapeHtml(clip.clip_reviewed)}">
 						<p class="card-text">${escapeHtml(clip.metadata)}</p>
@@ -202,9 +203,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	function createHiddenElements(clips) {
 		nextClipElements = [];
-		clips.forEach(clip => {
+		clips.forEach((clip, index) => {
 			const template = document.createElement('template');
-			template.innerHTML = videoCardTemplate(clip).trim();
+			template.innerHTML = videoCardTemplate(clip, index).trim();
 			const clipElement = template.content.firstChild;
 			clipElement.style.display = 'none';
 			nextClipElements.push(clipElement);
@@ -303,17 +304,18 @@ document.addEventListener('DOMContentLoaded', function () {
 	function saveComments() {
 		if (currentClips.length === 0) return Promise.resolve();
 
-		const comments = currentClips.map(clip => {
-			const el = document.getElementById(`comment-${clip.filename}`);
+		const comments = currentClips.map((clip, index) => {
+			const el = document.getElementById(`comment-${index}`);
 			return {
-				filename: clip.filename,
+				avi_path: clip.avi_path,
 				comment: el ? el.value : ''
 			};
 		});
 
 		return axios.post('/save_comments', comments)
 			.then(response => {
-				showAlert('Comments saved');
+				const dbPath = response.data.db_path;
+				showAlert(`Comments saved to ${dbPath}`);
 			})
 			.catch(() => {
 				showAlert('Error saving comments', 'danger');
@@ -358,8 +360,8 @@ document.addEventListener('DOMContentLoaded', function () {
 		updatePageInfo();
 
 		clipGrid.innerHTML = '';
-		currentClips.forEach(clip => {
-			const clipHtml = videoCardTemplate(clip);
+		currentClips.forEach((clip, index) => {
+			const clipHtml = videoCardTemplate(clip, index);
 			clipGrid.insertAdjacentHTML('beforeend', clipHtml);
 		});
 	}
