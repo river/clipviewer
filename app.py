@@ -31,7 +31,7 @@ VIDEO_BASE_PATH = "/"
 CLIPS_PER_PAGE = 6
 
 _REAL_VIDEO_BASE = os.path.realpath(VIDEO_BASE_PATH)
-_REAL_CSV_DIR = os.path.realpath(os.getcwd())
+_REAL_CSV_DIR = os.path.realpath(os.environ.get("CLIPVIEWER_CSV_DIR", os.getcwd()))
 
 # Temp directory for converted MP4 files (for cross-browser compatibility)
 _tmpdir = tempfile.mkdtemp(prefix="clipviewer_")
@@ -88,6 +88,15 @@ def load_csv():
             {"status": "error", "message": "CSV path not in allowed directory"}
         ), 403
 
+    # Skip re-processing if DB is already up-to-date
+    db_path = get_db_path(csv_path)
+    try:
+        if os.path.isfile(db_path) and os.path.getmtime(db_path) >= os.path.getmtime(csv_path):
+            session["db_path"] = db_path
+            return jsonify({"status": "success", "message": "CSV loaded successfully"})
+    except OSError:
+        pass
+
     try:
         # Read CSV
         with open(csv_path, newline="") as f:
@@ -121,7 +130,6 @@ def load_csv():
             clip_rows.append((row["avi_path"], metadata))
 
         # Create/open database and import
-        db_path = get_db_path(csv_path)
         with sqlite3.connect(db_path, timeout=10) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS clips (
@@ -238,8 +246,31 @@ _convert_locks: dict[str, threading.Lock] = {}
 _convert_locks_guard = threading.Lock()
 
 
+def _is_browser_compatible(path: str) -> bool:
+    """Check if video is already H.264/yuv420p MP4 (playable in all browsers)."""
+    if not path.lower().endswith(".mp4"):
+        return False
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name,pix_fmt",
+                "-of", "csv=p=0",
+                path,
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip() == "h264,yuv420p"
+    except Exception:
+        return False
+
+
 def _to_mp4(video_path: str) -> str:
     """Convert video to H.264 MP4 in temp dir for cross-browser playback."""
+    if _is_browser_compatible(video_path):
+        return video_path
+
     stem = os.path.splitext(os.path.basename(video_path))[0]
     path_hash = hashlib.md5(video_path.encode()).hexdigest()
     dst = os.path.join(_tmpdir, f"{stem}_{path_hash}.mp4")
@@ -267,8 +298,11 @@ def _to_mp4(video_path: str) -> str:
                     video_path,
                     "-c:v",
                     "libx264",
+                    "-preset",
+                    "ultrafast",
                     "-pix_fmt",
                     "yuv420p",
+                    "-an",
                     tmp_dst,
                 ],
                 check=True,
@@ -309,7 +343,25 @@ def main(
     _REAL_CSV_DIR = str(csv_dir)
 
     print(f"Allowed CSV directory: {_REAL_CSV_DIR}")
-    app.run(host="0.0.0.0", port=port, debug=debug)
+
+    if debug:
+        app.run(host="0.0.0.0", port=port, debug=True, threaded=True)
+    else:
+        env = os.environ.copy()
+        env["CLIPVIEWER_CSV_DIR"] = _REAL_CSV_DIR
+        subprocess.run(
+            [
+                "gunicorn",
+                "app:app",
+                "--bind", f"0.0.0.0:{port}",
+                "--workers", "4",
+                "--threads", "2",
+                "--timeout", "300",
+                "--preload",
+                "--access-logfile", "-",
+            ],
+            env=env,
+        )
 
 
 def cli() -> None:
