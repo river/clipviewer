@@ -4,6 +4,8 @@ document.addEventListener('DOMContentLoaded', function () {
 	let currentClips = [];
 	const pageCache = new Map();
 	const MAX_CACHE_SIZE = 7;
+	const domCache = new Map();
+	const MAX_DOM_CACHE_SIZE = 3;
 	let currentPage = 0;
 	let totalPages = 0;
 	let totalClips = 0;
@@ -57,7 +59,11 @@ document.addEventListener('DOMContentLoaded', function () {
 				const el = document.getElementById(`comment-${index}`);
 				if (el) clip.comment = el.value;
 			});
+			// DOM cache has wrong widget type, clear it
+			domCache.forEach(frag => frag.querySelectorAll('video').forEach(v => { v.src = ''; }));
+			domCache.clear();
 			updateUI();
+			preloadAdjacentPages();
 		}
 	});
 
@@ -74,6 +80,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	function loadCSV() {
 		pageCache.clear();
+		domCache.forEach(frag => frag.querySelectorAll('video').forEach(v => { v.src = ''; }));
+		domCache.clear();
 		const csvPath = csvPathInput.value;
 		const metadataFields = metadataInput.value;
 
@@ -168,15 +176,82 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function preloadAdjacentPages() {
-		if (currentPage > 0 && !pageCache.has(currentPage - 1)) {
-			getCachedOrFetch(currentPage - 1).catch(() => {});
-		}
-		if (currentPage < totalPages - 1 && !pageCache.has(currentPage + 1)) {
-			getCachedOrFetch(currentPage + 1).catch(() => {});
+		const pages = [];
+		if (currentPage > 0) pages.push(currentPage - 1);
+		if (currentPage < totalPages - 1) pages.push(currentPage + 1);
+		pages.forEach(page => {
+			getCachedOrFetch(page).then(data => {
+				if (!domCache.has(page)) {
+					prerenderDom(page, data);
+				}
+			}).catch(() => {});
+		});
+	}
+
+	function prerenderDom(page, data) {
+		const fragment = document.createDocumentFragment();
+		data.clips.forEach((clip, index) => {
+			const wrapper = document.createElement('template');
+			wrapper.innerHTML = videoCardTemplate(clip, index).trim();
+			const el = wrapper.content.firstChild;
+			// Don't autoplay videos that aren't visible yet
+			const video = el.querySelector('video');
+			if (video) video.removeAttribute('autoplay');
+			fragment.appendChild(el);
+		});
+		domCache.set(page, fragment);
+		evictDomCache();
+	}
+
+	function evictDomCache() {
+		while (domCache.size > MAX_DOM_CACHE_SIZE) {
+			let farthest = null;
+			let maxDist = -1;
+			for (const key of domCache.keys()) {
+				const dist = Math.abs(key - currentPage);
+				if (dist > maxDist) { maxDist = dist; farthest = key; }
+			}
+			domCache.get(farthest).querySelectorAll('video').forEach(v => { v.src = ''; });
+			domCache.delete(farthest);
 		}
 	}
 
+	function saveCurrentDom() {
+		if (clipGrid.children.length === 0) return;
+		clipGrid.querySelectorAll('video').forEach(v => { v.pause(); });
+		const fragment = document.createDocumentFragment();
+		while (clipGrid.firstChild) {
+			fragment.appendChild(clipGrid.firstChild);
+		}
+		domCache.set(currentPage, fragment);
+		evictDomCache();
+	}
+
 	function fetchClips() {
+		// Try DOM cache first (instant swap)
+		if (domCache.has(currentPage) && pageCache.has(currentPage)) {
+			clipGrid.querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
+			clipGrid.innerHTML = '';
+			clipGrid.appendChild(domCache.get(currentPage));
+			domCache.delete(currentPage);
+			clipGrid.querySelectorAll('video').forEach(v => { v.muted = true; v.play().catch(() => {}); });
+
+			const data = pageCache.get(currentPage);
+			currentClips = data.clips.map(c => ({...c}));
+			totalPages = data.total_pages;
+			totalClips = data.total_clips;
+			clipsPerPage = data.clips_per_page;
+			// Sync comment values from DOM into currentClips
+			currentClips.forEach((clip, index) => {
+				const el = document.getElementById(`comment-${index}`);
+				if (el) clip.comment = el.value;
+			});
+			updatePageInfo();
+			preloadAdjacentPages();
+			return;
+		}
+
+		// Fall back to JSON cache or network fetch
 		getCachedOrFetch(currentPage).then(data => {
 			currentClips = data.clips.map(c => ({...c}));
 			totalPages = data.total_pages;
@@ -222,6 +297,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	function nextPage() {
 		if (currentPage < totalPages - 1) {
 			saveComments();
+			saveCurrentDom();
 			currentPage++;
 			updateUrlParams();
 			fetchClips();
@@ -231,6 +307,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	function prevPage() {
 		if (currentPage > 0) {
 			saveComments();
+			saveCurrentDom();
 			currentPage--;
 			updateUrlParams();
 			fetchClips();
@@ -240,6 +317,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	function goToPage(page) {
 		if (page >= 0 && page <= (totalPages - 1)) {
 			saveComments();
+			saveCurrentDom();
 			currentPage = page;
 			updateUrlParams();
 			fetchClips();
