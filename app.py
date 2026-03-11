@@ -113,13 +113,12 @@ def load_csv():
         # Build clip tuples with pre-formatted metadata
         clip_rows = []
         for row in rows:
-            filename = row["avi_path"].split("/")[-1]
             metadata = (
                 ", ".join(f"{m}: {row.get(m, '')}" for m in metadata_fields)
                 if metadata_fields
                 else ""
             )
-            clip_rows.append((row["avi_path"], filename, metadata))
+            clip_rows.append((row["avi_path"], metadata))
 
         # Create/open database and import
         db_path = get_db_path(csv_path)
@@ -128,7 +127,6 @@ def load_csv():
                 CREATE TABLE IF NOT EXISTS clips (
                     id INTEGER PRIMARY KEY,
                     avi_path TEXT NOT NULL UNIQUE,
-                    filename TEXT NOT NULL DEFAULT '',
                     metadata TEXT NOT NULL DEFAULT '',
                     comment TEXT NOT NULL DEFAULT ''
                 )
@@ -136,8 +134,8 @@ def load_csv():
 
             # Upsert: update metadata, preserve existing comments
             conn.executemany(
-                """INSERT INTO clips (avi_path, filename, metadata)
-                   VALUES (?, ?, ?)
+                """INSERT INTO clips (avi_path, metadata)
+                   VALUES (?, ?)
                    ON CONFLICT(avi_path) DO UPDATE SET
                        metadata = excluded.metadata""",
                 clip_rows,
@@ -158,13 +156,12 @@ def get_clips():
 
         total = conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0]
         rows = conn.execute(
-            "SELECT avi_path, filename, metadata, comment FROM clips ORDER BY id LIMIT ? OFFSET ?",
+            "SELECT avi_path, metadata, comment FROM clips ORDER BY id LIMIT ? OFFSET ?",
             (CLIPS_PER_PAGE, offset),
         ).fetchall()
 
     clips = [
         {
-            "video_path": row["avi_path"],
             "metadata": row["metadata"],
             "clip_reviewed": "reviewed" if row["comment"] else "",
             "comment": row["comment"],
@@ -197,7 +194,7 @@ def save_comments():
             updates,
         )
 
-    return jsonify({"status": "success", "db_path": get_db_path(session["csv_path"])})
+    return jsonify({"status": "success", "db_path": session["db_path"]})
 
 
 @app.route("/export_comments")
