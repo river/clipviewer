@@ -1,3 +1,11 @@
+:root {
+	--video-placeholder-bg: rgb(233, 236, 239);
+}
+
+[data-bs-theme=dark] {
+	--video-placeholder-bg: rgb(42, 47, 54);
+}
+
 .theme-toggle-btn {
 	position: fixed;
 	top: 12px;
@@ -12,11 +20,12 @@
 }
 
 #loading-spinner {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 9999;
+	position: fixed;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 9999;
 }
 
 .alert {
@@ -56,6 +65,22 @@
 	position: relative;
 	width: 100%;
 	padding-bottom: 100%;
+	background-color: var(--video-placeholder-bg);
+	overflow: hidden;
+}
+
+.video-spinner {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 1;
+	pointer-events: none;
+}
+
+.video-spinner.is-hidden {
+	display: none;
 }
 
 .video-container video {
@@ -76,4 +101,3 @@
 	/* these clips were already reviewed */
 	background-color: rgb(0, 42, 61);
 }
-
