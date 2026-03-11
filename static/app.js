@@ -21,8 +21,46 @@ document.addEventListener('DOMContentLoaded', function () {
 		return str.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 	}
 
+	function formatMetadata(str) {
+		if (!str) return '';
+		return str.split('\n').map(field => {
+			const colonIdx = field.indexOf(': ');
+			if (colonIdx === -1) return escapeHtml(field);
+			const key = field.substring(0, colonIdx);
+			const value = field.substring(colonIdx + 2);
+			return `${escapeHtml(key)}: <strong>${escapeHtml(value)}</strong>`;
+		}).join('<br>');
+	}
+
 	function releaseVideos(container) {
 		container.querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
+	}
+
+	function bindVideoLoadingStates(container) {
+		container.querySelectorAll('.video-container').forEach(videoContainer => {
+			const video = videoContainer.querySelector('video');
+			const spinner = videoContainer.querySelector('.video-spinner');
+			if (!video || !spinner) return;
+
+			if (video.readyState >= 2) {
+				spinner.classList.add('is-hidden');
+				return;
+			}
+
+			if (video.dataset.loadingBound === '1') return;
+			video.dataset.loadingBound = '1';
+
+			const hideSpinner = () => {
+				spinner.classList.add('is-hidden');
+				video.removeEventListener('loadeddata', hideSpinner);
+				video.removeEventListener('canplay', hideSpinner);
+				video.removeEventListener('error', hideSpinner);
+			};
+
+			video.addEventListener('loadeddata', hideSpinner, { once: true });
+			video.addEventListener('canplay', hideSpinner, { once: true });
+			video.addEventListener('error', hideSpinner, { once: true });
+		});
 	}
 
 	function removePreloadLinks(page) {
@@ -194,12 +232,16 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	function showLoadingSpinner() {
 		// Create and show the loading spinner
+		const spinnerOverlay = document.createElement('div');
+		spinnerOverlay.id = 'loading-spinner';
+
 		const spinner = document.createElement('div');
-		spinner.id = 'loading-spinner';
 		spinner.className = 'spinner-border text-primary';
 		spinner.setAttribute('role', 'status');
-		spinner.innerHTML = '<span class="sr-only">Loading...</span>';
-		document.body.appendChild(spinner);
+		spinner.setAttribute('aria-label', 'Loading');
+
+		spinnerOverlay.appendChild(spinner);
+		document.body.appendChild(spinnerOverlay);
 	}
 
 	function hideLoadingSpinner() {
@@ -334,6 +376,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		clipGrid.appendChild(domCache.get(currentPage));
 		domCache.delete(currentPage);
 		removePreloadLinks(currentPage);
+		bindVideoLoadingStates(clipGrid);
 		clipGrid.querySelectorAll('video').forEach(v => { v.muted = true; v.play().catch(() => {}); });
 
 		applyPageData(pageCache.get(currentPage));
@@ -431,10 +474,13 @@ document.addEventListener('DOMContentLoaded', function () {
 			<div class="col">
 				<div class="card h-100">
 					<div class="video-container">
+						<div class="video-spinner" aria-hidden="true">
+							<div class="spinner-border spinner-border-sm" role="status"></div>
+						</div>
 						<video src="/video${escapeHtml(clip.avi_path)}" autoplay loop muted></video>
 					</div>
 					<div class="card-body ${escapeHtml(clip.clip_reviewed)}">
-						<p class="card-text">${escapeHtml(clip.metadata)}</p>
+						<p class="card-text">${formatMetadata(clip.metadata)}</p>
 						${commentHtml}
 					</div>
 				</div>
@@ -567,6 +613,7 @@ document.addEventListener('DOMContentLoaded', function () {
 			const clipHtml = videoCardTemplate(clip, index);
 			clipGrid.insertAdjacentHTML('beforeend', clipHtml);
 		});
+		bindVideoLoadingStates(clipGrid);
 		clipGrid.style.minHeight = '';
 	}
 

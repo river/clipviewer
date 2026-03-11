@@ -79,7 +79,9 @@ def get_db() -> sqlite3.Connection:
     """Open a DB connection from the session, or abort 400 if none loaded."""
     db_path = session.get("db_path")
     if not db_path or not os.path.isfile(db_path):
-        abort(400, description="No file loaded. Please load a CSV or Parquet file first.")
+        abort(
+            400, description="No file loaded. Please load a CSV or Parquet file first."
+        )
     conn = sqlite3.connect(db_path, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
@@ -101,6 +103,7 @@ def load_file():
     metadata_fields = [
         m.strip() for m in str(request.json["metadata_fields"]).split(",") if m.strip()
     ]
+    video_path_column = "avi_path"
 
     if not is_path_within(file_path, FILE_DIR):
         return jsonify(
@@ -111,12 +114,51 @@ def load_file():
     file_dir = os.path.dirname(os.path.realpath(file_path))
     read_only = not os.access(file_dir, os.W_OK)
 
-    # Skip re-processing if DB is already up-to-date
+    # Skip re-processing if DB is already up-to-date AND metadata fields match
     db_path = get_db_path(file_path, use_tmpdir=read_only)
+    requested_meta = ",".join(metadata_fields)
     try:
-        if os.path.isfile(db_path) and os.path.getmtime(db_path) >= os.path.getmtime(file_path):
-            session["db_path"] = db_path
-            return jsonify({"status": "success", "message": "File loaded successfully", "read_only": read_only})
+        if os.path.isfile(db_path) and os.path.getmtime(db_path) >= os.path.getmtime(
+            file_path
+        ):
+            with sqlite3.connect(db_path, timeout=10) as conn:
+                try:
+                    stored_meta = conn.execute(
+                        "SELECT key, value FROM meta WHERE key IN ('metadata_fields', 'source_file_path', 'video_path_column')"
+                    ).fetchall()
+                    stored = {k: v for k, v in stored_meta}
+                    if (
+                        stored.get("metadata_fields") == requested_meta
+                        and stored.get("source_file_path") == file_path
+                        and stored.get("video_path_column")
+                    ):
+                        session["db_path"] = db_path
+                        return jsonify(
+                            {
+                                "status": "success",
+                                "message": "File loaded successfully",
+                                "read_only": read_only,
+                            }
+                        )
+                except sqlite3.OperationalError:
+                    try:
+                        stored = conn.execute(
+                            "SELECT value FROM meta WHERE key = 'metadata_fields'"
+                        ).fetchone()
+                        if stored and stored[0] == requested_meta:
+                            session["db_path"] = db_path
+                            return jsonify(
+                                {
+                                    "status": "success",
+                                    "message": "File loaded successfully",
+                                    "read_only": read_only,
+                                }
+                            )
+                    except sqlite3.OperationalError:
+                        pass  # meta table missing (old DB) -- fall through to re-import
+                except Exception:
+                    pass
+
     except OSError:
         pass
 
@@ -139,6 +181,7 @@ def load_file():
                     "paths to existing video files with extensions: "
                     + ", ".join(sorted(VIDEO_EXTENSIONS))
                 )
+            video_path_column = detected
             df = df.rename({detected: "avi_path"})
 
         fieldnames = df.columns
@@ -162,7 +205,7 @@ def load_file():
         clip_rows = []
         for row in rows:
             metadata = (
-                ", ".join(f"{m}: {row.get(m, '')}" for m in metadata_fields)
+                "\n".join(f"{m}: {row.get(m, '')}" for m in metadata_fields)
                 if metadata_fields
                 else ""
             )
@@ -179,6 +222,24 @@ def load_file():
                     reviewed_at TEXT DEFAULT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('metadata_fields', ?)",
+                (requested_meta,),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('source_file_path', ?)",
+                (file_path,),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('video_path_column', ?)",
+                (video_path_column,),
+            )
 
             # Upsert: update metadata, preserve existing comments
             conn.executemany(
@@ -190,7 +251,13 @@ def load_file():
             )
 
         session["db_path"] = db_path
-        return jsonify({"status": "success", "message": "File loaded successfully", "read_only": read_only})
+        return jsonify(
+            {
+                "status": "success",
+                "message": "File loaded successfully",
+                "read_only": read_only,
+            }
+        )
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 400
 
@@ -263,15 +330,66 @@ def save_comments():
 @app.route("/export_comments")
 def export_comments():
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT avi_path, comment, reviewed_at FROM clips WHERE reviewed_at IS NOT NULL ORDER BY avi_path"
+        meta_rows = conn.execute(
+            "SELECT key, value FROM meta WHERE key IN ('source_file_path', 'video_path_column')"
         ).fetchall()
+        meta = {row["key"]: row["value"] for row in meta_rows}
+
+        source_file_path = meta.get("source_file_path")
+        video_path_column = meta.get("video_path_column")
+        if not source_file_path or not video_path_column:
+            abort(
+                400,
+                description="Missing export metadata. Reload the source file first.",
+            )
+
+        clip_rows = conn.execute(
+            "SELECT avi_path, comment, reviewed_at FROM clips"
+        ).fetchall()
+
+    if not os.path.isfile(source_file_path):
+        abort(400, description=f"Source file not found: {source_file_path}")
+
+    ext = os.path.splitext(source_file_path)[1].lower()
+    if ext == ".parquet":
+        df = pl.read_parquet(source_file_path)
+    else:
+        df = pl.read_csv(source_file_path)
+
+    source_columns = list(df.columns)
+    if video_path_column not in source_columns:
+        abort(
+            400,
+            description=f"Configured video path column '{video_path_column}' not found in source file.",
+        )
+
+    annotation_comment_col = "clipviewer_comment"
+    annotation_reviewed_col = "clipviewer_reviewed_at"
+    if (
+        annotation_comment_col in source_columns
+        or annotation_reviewed_col in source_columns
+    ):
+        abort(
+            400,
+            description="Source file already contains clipviewer export columns.",
+        )
+
+    comment_map = {
+        str(row["avi_path"]): (row["comment"], row["reviewed_at"] or "")
+        for row in clip_rows
+    }
+    source_rows = df.to_dicts()
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["avi_path", "comments", "reviewed_at"])
-    for row in rows:
-        writer.writerow([row["avi_path"], row["comment"], row["reviewed_at"] or ""])
+    writer.writerow(source_columns + [annotation_comment_col, annotation_reviewed_col])
+    for row in source_rows:
+        avi_path = row.get(video_path_column)
+        comment, reviewed_at = comment_map.get(str(avi_path), ("", ""))
+        writer.writerow(
+            ["" if row.get(col) is None else row.get(col) for col in source_columns]
+            + [comment, reviewed_at]
+        )
 
     return Response(
         buf.getvalue(),
@@ -291,13 +409,20 @@ def _is_browser_compatible(path: str) -> bool:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=codec_name,pix_fmt",
-                "-of", "csv=p=0",
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,pix_fmt",
+                "-of",
+                "csv=p=0",
                 path,
             ],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return result.stdout.strip() == "h264,yuv420p"
     except Exception:
@@ -392,20 +517,25 @@ def main(
                 super().__init__()
 
             def load_config(self):
+                if self.cfg is None:
+                    return
                 for key, value in self.options.items():
                     self.cfg.set(key, value)
 
             def load(self):
                 return self.application
 
-        GunicornApp(app, {
-            "bind": f"0.0.0.0:{port}",
-            "workers": 4,
-            "threads": 2,
-            "timeout": 300,
-            "preload_app": True,
-            "accesslog": "-",
-        }).run()
+        GunicornApp(
+            app,
+            {
+                "bind": f"0.0.0.0:{port}",
+                "workers": 4,
+                "threads": 2,
+                "timeout": 300,
+                "preload_app": True,
+                "accesslog": "-",
+            },
+        ).run()
 
 
 def cli() -> None:
