@@ -58,9 +58,6 @@ document.addEventListener('DOMContentLoaded', function () {
 				if (el) clip.comment = el.value;
 			});
 			updateUI();
-			// Clear cache so preloaded pages use the new widget type
-			pageCache.clear();
-			preloadAdjacentPages();
 		}
 	});
 
@@ -187,6 +184,8 @@ document.addEventListener('DOMContentLoaded', function () {
 			clipsPerPage = data.clips_per_page;
 			updateUI();
 			preloadAdjacentPages();
+		}).catch(() => {
+			showAlert('Error loading clips', 'danger');
 		});
 	}
 
