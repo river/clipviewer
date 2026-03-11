@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	const MAX_DOM_CACHE_SIZE = 3;
 	const preloadLinks = new Map();
 	const prerenderPromises = new Map();
+	let navGeneration = 0;
 	let currentPage = 0;
 	let totalPages = 0;
 	let totalClips = 0;
@@ -97,7 +98,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	loadForm.addEventListener('submit', handleFormSubmit);
 
+	function syncLabelOptionsDisabled() {
+		labelOptionsInput.disabled = freeTextToggle.checked;
+	}
+	syncLabelOptionsDisabled();
+
 	freeTextToggle.addEventListener('change', function () {
+		syncLabelOptionsDisabled();
 		updateUrlParams();
 		if (currentClips.length > 0) {
 			// Read current comment values from DOM before re-rendering
@@ -139,8 +146,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		document.getElementById('clip-viewer').style.opacity = '0.1';
 
 		axios.post('/load_csv', { csv_path: csvPath, metadata_fields: metadataFields })
-			.then(response => {
-				showAlert(response.data.message);
+			.then(() => {
 				fetchClips();
 			})
 			.catch(error => {
@@ -182,6 +188,10 @@ document.addEventListener('DOMContentLoaded', function () {
 	const prevButton = document.getElementById('prevButton');
 	const nextButton = document.getElementById('nextButton');
 	const goToPageButton = document.getElementById('goToPageButton');
+	const jumpToCollapse = document.getElementById('jumpToCollapse');
+	const jumpToInput = document.getElementById('jumpToInput');
+	const jumpToGo = document.getElementById('jumpToGo');
+	const progressClickArea = document.getElementById('progressClickArea');
 	const saveButton = document.getElementById('saveButton');
 	const pageInfo = document.getElementById('pageInfo');
 	const progressBar = document.getElementById('progressBar');
@@ -189,7 +199,30 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	prevButton.addEventListener('click', prevPage);
 	nextButton.addEventListener('click', nextPage);
-	goToPageButton.addEventListener('click', promptForPage);
+	// Auto-focus input when collapse opens
+	jumpToCollapse.addEventListener('shown.bs.collapse', () => {
+		jumpToInput.focus();
+	});
+	jumpToCollapse.addEventListener('hidden.bs.collapse', () => {
+		jumpToInput.value = '';
+	});
+
+	// Handle Go button click and Enter key
+	jumpToGo.addEventListener('click', handleJumpToPage);
+	jumpToInput.addEventListener('keydown', (e) => {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			handleJumpToPage();
+		} else if (e.key === 'Escape') {
+			bootstrap.Collapse.getInstance(jumpToCollapse)?.hide();
+		}
+	});
+
+	// Clicking the progress bar opens the jump-to input
+	progressClickArea.addEventListener('click', () => {
+		const bsCollapse = bootstrap.Collapse.getOrCreateInstance(jumpToCollapse);
+		bsCollapse.show();
+	});
 	saveButton.addEventListener('click', saveComments);
 	document.getElementById('exportButton').addEventListener('click', () => {
 		window.location.href = '/export_comments';
@@ -285,6 +318,7 @@ document.addEventListener('DOMContentLoaded', function () {
 			if (el) clip.comment = el.value;
 		});
 		updatePageInfo();
+		clipGrid.style.minHeight = '';
 		preloadAdjacentPages();
 	}
 
@@ -298,7 +332,9 @@ document.addEventListener('DOMContentLoaded', function () {
 		// If a prerender is already in-flight for this page, wait for it
 		const pending = prerenderPromises.get(currentPage);
 		if (pending) {
+			const gen = navGeneration;
 			pending.then(() => {
+				if (gen !== navGeneration) return; // stale navigation
 				if (domCache.has(currentPage) && pageCache.has(currentPage)) {
 					swapFromDomCache();
 				} else {
@@ -334,11 +370,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	function fetchClipsFallback() {
 		// Fall back to JSON cache or network fetch
+		const gen = navGeneration;
 		getCachedOrFetch(currentPage).then(data => {
+			if (gen !== navGeneration) return; // stale navigation
 			applyPageData(data);
 			updateUI();
 			preloadAdjacentPages();
 		}).catch(() => {
+			if (gen !== navGeneration) return;
 			showAlert('Error loading clips', 'danger');
 		});
 	}
@@ -355,7 +394,12 @@ document.addEventListener('DOMContentLoaded', function () {
 					? `<option value="${escaped}" selected>${escaped}</option>`
 					: `<option value="${escaped}">${escaped}</option>`;
 			}).join('');
-			commentHtml = `<select id="${commentId}" class="form-select">${optionsHtml}</select>`;
+			let extraOption = '';
+			if (clip.comment && !labelOptions.includes(clip.comment)) {
+				const escaped = escapeHtml(clip.comment);
+				extraOption = `<option value="${escaped}" selected>${escaped}</option>`;
+			}
+			commentHtml = `<select id="${commentId}" class="form-select">${extraOption}${optionsHtml}</select>`;
 		}
 
 		return `
@@ -375,9 +419,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	function navigateToPage(page) {
 		markDisplayedClipsReviewed();
-		saveComments();
+		saveComments({ silent: true });
+		clipGrid.style.minHeight = clipGrid.offsetHeight + 'px';
 		saveCurrentDom();
 		currentPage = page;
+		navGeneration++;
 		updateUrlParams();
 		fetchClips();
 	}
@@ -394,23 +440,35 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (page >= 0 && page <= (totalPages - 1)) {
 			navigateToPage(page);
 		} else {
-			alert("Page number is not in range");
+			showAlert('Page number is not in range.', 'danger');
 		}
 	}
 
-	function promptForPage() {
-		var newPageNumber = prompt("Go to page:");
-		if (newPageNumber !== null && newPageNumber !== "") {
-			newPageNumber = parseInt(newPageNumber);
-			if (!isNaN(newPageNumber) && newPageNumber > 0) {
-				goToPage(newPageNumber - 1);
-			} else {
-				alert("Invalid page number.");
-			}
+	function handleJumpToPage() {
+		const raw = jumpToInput.value.trim();
+		if (!/^\d+$/.test(raw)) {
+			showAlert('Invalid page number.', 'danger');
+			return;
+		}
+		const page = parseInt(raw) - 1;
+		if (page >= 0 && page <= (totalPages - 1)) {
+			bootstrap.Collapse.getInstance(jumpToCollapse)?.hide();
+			goToPage(page);
+		} else {
+			showAlert('Page number is not in range.', 'danger');
 		}
 	}
 
-	function saveComments() {
+	const autoSaveIndicator = document.getElementById('autoSaveIndicator');
+
+	function showAutoSaveIndicator() {
+		const timeStr = new Date().toLocaleTimeString('en-GB', { hour12: false });
+		autoSaveIndicator.style.visibility = 'visible';
+		const tooltip = bootstrap.Tooltip.getInstance(autoSaveIndicator);
+		if (tooltip) tooltip.setContent({ '.tooltip-inner': `Auto-saved at ${timeStr}` });
+	}
+
+	function saveComments({ silent = false } = {}) {
 		if (currentClips.length === 0) return Promise.resolve();
 
 		const comments = currentClips.map((clip, index) => {
@@ -424,11 +482,15 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		return axios.post('/save_comments', comments)
 			.then(response => {
-				const dbPath = response.data.db_path;
-				showAlert(`Comments saved to ${dbPath}`);
+				if (silent) {
+					showAutoSaveIndicator();
+				} else {
+					const dbPath = response.data.db_path;
+					showAlert(`Comments saved to ${dbPath}`);
+				}
 			})
 			.catch(() => {
-				showAlert('Error saving comments', 'danger');
+				if (!silent) showAlert('Error saving comments', 'danger');
 			});
 	}
 
@@ -449,13 +511,24 @@ document.addEventListener('DOMContentLoaded', function () {
 		// 'show' class CSS transition triggers correctly on the alert.
 		alertContainer.offsetHeight;
 
-		// Set up fade-out and removal for this specific alert
-		setTimeout(() => {
+		// Set up fade-out and removal, pausing while hovered
+		let hovered = false;
+		let timer = setTimeout(dismissAlert, 3000);
+		alert.addEventListener('mouseenter', () => {
+			hovered = true;
+			clearTimeout(timer);
+		});
+		alert.addEventListener('mouseleave', () => {
+			hovered = false;
+			timer = setTimeout(dismissAlert, 1000);
+		});
+		function dismissAlert() {
+			if (hovered) return;
 			alert.classList.remove('show');
 			alert.addEventListener('transitionend', () => {
 				alert.remove();
 			});
-		}, 3000);
+		}
 	}
 
 	function updatePageInfo() {
@@ -464,6 +537,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		progressBar.style.width = `${progress}% `;
 		prevButton.disabled = currentPage === 0;
 		nextButton.disabled = currentPage === totalPages - 1;
+		jumpToInput.placeholder = `1–${totalPages}`;
 	}
 
 	function updateUI() {
@@ -475,6 +549,7 @@ document.addEventListener('DOMContentLoaded', function () {
 			const clipHtml = videoCardTemplate(clip, index);
 			clipGrid.insertAdjacentHTML('beforeend', clipHtml);
 		});
+		clipGrid.style.minHeight = '';
 	}
 
 	function handleKeydown(event) {
