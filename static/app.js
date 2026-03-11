@@ -313,7 +313,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		return axios.post('/save_comments', comments)
 			.then(response => {
-				showAlert('Comments saved');
+				const dbPath = response.data.db_path;
+				showAlert(`Comments saved to ${dbPath}`);
 			})
 			.catch(() => {
 				showAlert('Error saving comments', 'danger');

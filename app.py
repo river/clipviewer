@@ -215,7 +215,7 @@ def save_comments():
             updates,
         )
 
-    return jsonify({"status": "success"})
+    return jsonify({"status": "success", "db_path": get_db_path(session["csv_path"])})
 
 
 @app.route("/export_comments")
