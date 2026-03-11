@@ -17,6 +17,34 @@ document.addEventListener('DOMContentLoaded', function () {
 		return str.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 	}
 
+	function releaseVideos(container) {
+		container.querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
+	}
+
+	function clearDomCache() {
+		domCache.forEach(frag => releaseVideos(frag));
+		domCache.clear();
+	}
+
+	function evictMap(map, maxSize, onEvict) {
+		while (map.size > maxSize) {
+			let farthest = null, maxDist = -1;
+			for (const key of map.keys()) {
+				const dist = Math.abs(key - currentPage);
+				if (dist > maxDist) { maxDist = dist; farthest = key; }
+			}
+			if (onEvict) onEvict(map.get(farthest));
+			map.delete(farthest);
+		}
+	}
+
+	function applyPageData(data) {
+		currentClips = data.clips.map(c => ({...c}));
+		totalPages = data.total_pages;
+		totalClips = data.total_clips;
+		clipsPerPage = data.clips_per_page;
+	}
+
 	// ------------------------
 	// csv and metadata loading
 	// ------------------------
@@ -60,8 +88,7 @@ document.addEventListener('DOMContentLoaded', function () {
 				if (el) clip.comment = el.value;
 			});
 			// DOM cache has wrong widget type, clear it
-			domCache.forEach(frag => frag.querySelectorAll('video').forEach(v => { v.src = ''; }));
-			domCache.clear();
+			clearDomCache();
 			updateUI();
 			preloadAdjacentPages();
 		}
@@ -80,8 +107,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	function loadCSV() {
 		pageCache.clear();
-		domCache.forEach(frag => frag.querySelectorAll('video').forEach(v => { v.src = ''; }));
-		domCache.clear();
+		clearDomCache();
 		const csvPath = csvPathInput.value;
 		const metadataFields = metadataInput.value;
 
@@ -164,15 +190,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function evictCache() {
-		while (pageCache.size > MAX_CACHE_SIZE) {
-			let farthest = null;
-			let maxDist = -1;
-			for (const key of pageCache.keys()) {
-				const dist = Math.abs(key - currentPage);
-				if (dist > maxDist) { maxDist = dist; farthest = key; }
-			}
-			pageCache.delete(farthest);
-		}
+		evictMap(pageCache, MAX_CACHE_SIZE);
 	}
 
 	function preloadAdjacentPages() {
@@ -204,16 +222,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function evictDomCache() {
-		while (domCache.size > MAX_DOM_CACHE_SIZE) {
-			let farthest = null;
-			let maxDist = -1;
-			for (const key of domCache.keys()) {
-				const dist = Math.abs(key - currentPage);
-				if (dist > maxDist) { maxDist = dist; farthest = key; }
-			}
-			domCache.get(farthest).querySelectorAll('video').forEach(v => { v.src = ''; });
-			domCache.delete(farthest);
-		}
+		evictMap(domCache, MAX_DOM_CACHE_SIZE, frag => releaseVideos(frag));
 	}
 
 	function saveCurrentDom() {
@@ -230,17 +239,11 @@ document.addEventListener('DOMContentLoaded', function () {
 	function fetchClips() {
 		// Try DOM cache first (instant swap)
 		if (domCache.has(currentPage) && pageCache.has(currentPage)) {
-			clipGrid.querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
-			clipGrid.innerHTML = '';
 			clipGrid.appendChild(domCache.get(currentPage));
 			domCache.delete(currentPage);
 			clipGrid.querySelectorAll('video').forEach(v => { v.muted = true; v.play().catch(() => {}); });
 
-			const data = pageCache.get(currentPage);
-			currentClips = data.clips.map(c => ({...c}));
-			totalPages = data.total_pages;
-			totalClips = data.total_clips;
-			clipsPerPage = data.clips_per_page;
+			applyPageData(pageCache.get(currentPage));
 			// Sync comment values from DOM into currentClips
 			currentClips.forEach((clip, index) => {
 				const el = document.getElementById(`comment-${index}`);
@@ -253,10 +256,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		// Fall back to JSON cache or network fetch
 		getCachedOrFetch(currentPage).then(data => {
-			currentClips = data.clips.map(c => ({...c}));
-			totalPages = data.total_pages;
-			totalClips = data.total_clips;
-			clipsPerPage = data.clips_per_page;
+			applyPageData(data);
 			updateUI();
 			preloadAdjacentPages();
 		}).catch(() => {
@@ -400,7 +400,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	function updateUI() {
 		updatePageInfo();
 
-		clipGrid.querySelectorAll('video').forEach(v => { v.pause(); v.src = ''; });
+		releaseVideos(clipGrid);
 		clipGrid.innerHTML = '';
 		currentClips.forEach((clip, index) => {
 			const clipHtml = videoCardTemplate(clip, index);
