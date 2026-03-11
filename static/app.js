@@ -235,13 +235,9 @@ document.addEventListener('DOMContentLoaded', function () {
 		}
 		return axios.get(`/get_clips?page=${page}`).then(response => {
 			pageCache.set(page, response.data);
-			evictCache();
+			evictMap(pageCache, MAX_CACHE_SIZE);
 			return response.data;
 		});
-	}
-
-	function evictCache() {
-		evictMap(pageCache, MAX_CACHE_SIZE);
 	}
 
 	function preloadAdjacentPages() {
@@ -436,14 +432,6 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (currentPage > 0) navigateToPage(currentPage - 1);
 	}
 
-	function goToPage(page) {
-		if (page >= 0 && page <= (totalPages - 1)) {
-			navigateToPage(page);
-		} else {
-			showAlert('Page number is not in range.', 'danger');
-		}
-	}
-
 	function handleJumpToPage() {
 		const raw = jumpToInput.value.trim();
 		if (!/^\d+$/.test(raw)) {
@@ -453,7 +441,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		const page = parseInt(raw) - 1;
 		if (page >= 0 && page <= (totalPages - 1)) {
 			bootstrap.Collapse.getInstance(jumpToCollapse)?.hide();
-			goToPage(page);
+			navigateToPage(page);
 		} else {
 			showAlert('Page number is not in range.', 'danger');
 		}
@@ -553,14 +541,12 @@ document.addEventListener('DOMContentLoaded', function () {
 	}
 
 	function handleKeydown(event) {
+		const tag = document.activeElement.tagName;
 		if (event.key === 'Escape') {
-			// esc deselects any input
-			if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
 				document.activeElement.blur();
 			}
-		} else if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-			// left and right arrow
-			// and text input is NOT selected
+		} else if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
 			if (event.key === 'ArrowLeft') {
 				prevPage();
 			} else if (event.key === 'ArrowRight') {
