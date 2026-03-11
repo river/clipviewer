@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	const domCache = new Map();
 	const MAX_DOM_CACHE_SIZE = 3;
 	const preloadLinks = new Map();
+	const prerenderPromises = new Map();
 	let currentPage = 0;
 	let totalPages = 0;
 	let totalClips = 0;
@@ -206,21 +207,25 @@ document.addEventListener('DOMContentLoaded', function () {
 
 	function preloadAdjacentPages() {
 		const pages = [];
+		if (currentPage < totalPages - 1) pages.push(currentPage + 1); // prioritise next
 		if (currentPage > 0) pages.push(currentPage - 1);
-		if (currentPage < totalPages - 1) pages.push(currentPage + 1);
 		pages.forEach(page => {
-			getCachedOrFetch(page).then(data => {
+			if (prerenderPromises.has(page) || domCache.has(page)) return;
+			const promise = getCachedOrFetch(page).then(data => {
 				if (Math.abs(page - currentPage) > 1) return; // stale after navigation
 				if (!domCache.has(page)) {
 					prerenderDom(page, data);
 				}
 			}).catch(() => {});
+			prerenderPromises.set(page, promise);
+			promise.finally(() => prerenderPromises.delete(page));
 		});
 	}
 
 	function prerenderDom(page, data) {
 		const fragment = document.createDocumentFragment();
 		const links = [];
+		const isNext = page === currentPage + 1;
 		data.clips.forEach((clip, index) => {
 			const wrapper = document.createElement('template');
 			wrapper.innerHTML = videoCardTemplate(clip, index).trim();
@@ -228,9 +233,10 @@ document.addEventListener('DOMContentLoaded', function () {
 			const video = el.querySelector('video');
 			if (video) {
 				video.removeAttribute('autoplay');
-				// Prefetch video so it's in browser cache when swapped in
+				// Preload (high priority) for next page, prefetch (low) otherwise
 				const link = document.createElement('link');
-				link.rel = 'prefetch';
+				link.rel = isNext ? 'preload' : 'prefetch';
+				if (isNext) link.as = 'video';
 				link.href = video.src;
 				document.head.appendChild(link);
 				links.push(link);
@@ -260,25 +266,46 @@ document.addEventListener('DOMContentLoaded', function () {
 		evictDomCache();
 	}
 
+	function swapFromDomCache() {
+		clipGrid.appendChild(domCache.get(currentPage));
+		domCache.delete(currentPage);
+		removePreloadLinks(currentPage);
+		clipGrid.querySelectorAll('video').forEach(v => { v.muted = true; v.play().catch(() => {}); });
+
+		applyPageData(pageCache.get(currentPage));
+		// Sync comment values from DOM into currentClips
+		currentClips.forEach((clip, index) => {
+			const el = document.getElementById(`comment-${index}`);
+			if (el) clip.comment = el.value;
+		});
+		updatePageInfo();
+		preloadAdjacentPages();
+	}
+
 	function fetchClips() {
 		// Try DOM cache first (instant swap)
 		if (domCache.has(currentPage) && pageCache.has(currentPage)) {
-			clipGrid.appendChild(domCache.get(currentPage));
-			domCache.delete(currentPage);
-			removePreloadLinks(currentPage);
-			clipGrid.querySelectorAll('video').forEach(v => { v.muted = true; v.play().catch(() => {}); });
-
-			applyPageData(pageCache.get(currentPage));
-			// Sync comment values from DOM into currentClips
-			currentClips.forEach((clip, index) => {
-				const el = document.getElementById(`comment-${index}`);
-				if (el) clip.comment = el.value;
-			});
-			updatePageInfo();
-			preloadAdjacentPages();
+			swapFromDomCache();
 			return;
 		}
 
+		// If a prerender is already in-flight for this page, wait for it
+		const pending = prerenderPromises.get(currentPage);
+		if (pending) {
+			pending.then(() => {
+				if (domCache.has(currentPage) && pageCache.has(currentPage)) {
+					swapFromDomCache();
+				} else {
+					fetchClipsFallback();
+				}
+			});
+			return;
+		}
+
+		fetchClipsFallback();
+	}
+
+	function fetchClipsFallback() {
 		// Fall back to JSON cache or network fetch
 		getCachedOrFetch(currentPage).then(data => {
 			applyPageData(data);
