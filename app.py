@@ -3,7 +3,9 @@ import os
 import csv
 import io
 import sqlite3
-import argparse
+from pathlib import Path
+
+import typer
 import hashlib
 import shutil
 import subprocess
@@ -27,10 +29,9 @@ from flask import (
 
 VIDEO_BASE_PATH = "/"
 CLIPS_PER_PAGE = 6
-ALLOWED_CSV_DIR = os.environ.get("CLIPVIEWER_CSV_DIR", os.getcwd())
 
 _REAL_VIDEO_BASE = os.path.realpath(VIDEO_BASE_PATH)
-_REAL_CSV_DIR = os.path.realpath(ALLOWED_CSV_DIR)
+_REAL_CSV_DIR = os.path.realpath(os.getcwd())
 
 # Temp directory for converted MP4 files (for cross-browser compatibility)
 _tmpdir = tempfile.mkdtemp(prefix="clipviewer_")
@@ -42,12 +43,11 @@ atexit.register(shutil.rmtree, _tmpdir, ignore_errors=True)
 
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("CLIPVIEWER_SECRET_KEY", os.urandom(24))
+app.secret_key = os.urandom(24)
 
 
 def is_path_within(path: str, allowed_dir: str) -> bool:
-    real_path = os.path.realpath(path)
-    return real_path.startswith(allowed_dir + os.sep) or real_path == allowed_dir
+    return Path(path).resolve().is_relative_to(Path(allowed_dir).resolve())
 
 
 def get_db_path(csv_path: str) -> str:
@@ -297,19 +297,27 @@ def serve_video(filename):
     return send_file(mp4_path, mimetype="video/mp4")
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8888,
-        help="Port number to run the server on (default: 8888)",
-    )
-    args = parser.parse_args()
+def main(
+    port: int = typer.Option(8888, help="Port number to run the server on."),
+    csv_dir: Path = typer.Option(
+        Path.cwd(),
+        help="Allowed directory for CSV files.",
+        exists=True,
+        file_okay=False,
+        resolve_path=True,
+    ),
+    debug: bool = typer.Option(False, help="Enable Flask debug mode."),
+) -> None:
+    global _REAL_CSV_DIR
+    _REAL_CSV_DIR = str(csv_dir)
 
-    debug = os.environ.get("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
-    app.run(host="0.0.0.0", port=args.port, debug=debug)
+    print(f"Allowed CSV directory: {_REAL_CSV_DIR}")
+    app.run(host="0.0.0.0", port=port, debug=debug)
+
+
+def cli() -> None:
+    typer.run(main)
 
 
 if __name__ == "__main__":
-    main()
+    cli()
