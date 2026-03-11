@@ -1,17 +1,16 @@
 import atexit
-import os
 import csv
-import io
-import sqlite3
-from pathlib import Path
-
-import typer
 import hashlib
+import io
+import os
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import threading
+from pathlib import Path
 
+import typer
 from flask import (
     Flask,
     render_template,
@@ -27,15 +26,14 @@ from flask import (
 # CONFIGURATION
 # -------------
 
-VIDEO_BASE_PATH = "/"
 CLIPS_PER_PAGE = 6
 
-_REAL_VIDEO_BASE = os.path.realpath(VIDEO_BASE_PATH)
-_REAL_CSV_DIR = os.path.realpath(os.environ.get("CLIPVIEWER_CSV_DIR", os.getcwd()))
+VIDEO_BASE = os.path.realpath("/")
+CSV_DIR = os.path.realpath(os.getcwd())
 
 # Temp directory for converted MP4 files (for cross-browser compatibility)
-_tmpdir = tempfile.mkdtemp(prefix="clipviewer_")
-atexit.register(shutil.rmtree, _tmpdir, ignore_errors=True)
+TMPDIR = tempfile.mkdtemp(prefix="clipviewer_")
+atexit.register(shutil.rmtree, TMPDIR, ignore_errors=True)
 
 # -----------------------------
 # DO NOT MODIFY BELOW THIS LINE
@@ -83,7 +81,7 @@ def load_csv():
         m.strip() for m in str(request.json["metadata_fields"]).split(",") if m.strip()
     ]
 
-    if not is_path_within(csv_path, _REAL_CSV_DIR):
+    if not is_path_within(csv_path, CSV_DIR):
         return jsonify(
             {"status": "error", "message": "CSV path not in allowed directory"}
         ), 403
@@ -115,7 +113,7 @@ def load_csv():
 
         # Check video files (first 100)
         for row in rows[:100]:
-            video_path = os.path.join(VIDEO_BASE_PATH, row["avi_path"])
+            video_path = os.path.join(VIDEO_BASE, row["avi_path"])
             if not os.path.isfile(video_path):
                 raise FileNotFoundError(f"Video file not found: {video_path}")
 
@@ -273,7 +271,7 @@ def _to_mp4(video_path: str) -> str:
 
     stem = os.path.splitext(os.path.basename(video_path))[0]
     path_hash = hashlib.md5(video_path.encode()).hexdigest()
-    dst = os.path.join(_tmpdir, f"{stem}_{path_hash}.mp4")
+    dst = os.path.join(TMPDIR, f"{stem}_{path_hash}.mp4")
 
     # Per-path lock prevents duplicate concurrent ffmpeg conversions
     with _convert_locks_guard:
@@ -285,7 +283,7 @@ def _to_mp4(video_path: str) -> str:
             if os.path.getmtime(dst) >= os.path.getmtime(video_path):
                 return dst
 
-        tmp_fd, tmp_dst = tempfile.mkstemp(suffix=".mp4", dir=_tmpdir)
+        tmp_fd, tmp_dst = tempfile.mkstemp(suffix=".mp4", dir=TMPDIR)
         os.close(tmp_fd)
         try:
             subprocess.run(
@@ -318,8 +316,8 @@ def _to_mp4(video_path: str) -> str:
 
 @app.route("/video/<path:filename>")
 def serve_video(filename):
-    full_path = os.path.realpath(os.path.join(_REAL_VIDEO_BASE, filename))
-    if not is_path_within(full_path, _REAL_VIDEO_BASE):
+    full_path = os.path.realpath(os.path.join(VIDEO_BASE, filename))
+    if not is_path_within(full_path, VIDEO_BASE):
         return "Forbidden", 403
     try:
         mp4_path = _to_mp4(full_path)
@@ -339,29 +337,35 @@ def main(
     ),
     debug: bool = typer.Option(False, help="Enable Flask debug mode."),
 ) -> None:
-    global _REAL_CSV_DIR
-    _REAL_CSV_DIR = str(csv_dir)
-
-    print(f"Allowed CSV directory: {_REAL_CSV_DIR}")
+    global CSV_DIR
+    CSV_DIR = str(csv_dir)
 
     if debug:
         app.run(host="0.0.0.0", port=port, debug=True, threaded=True)
     else:
-        env = os.environ.copy()
-        env["CLIPVIEWER_CSV_DIR"] = _REAL_CSV_DIR
-        subprocess.run(
-            [
-                "gunicorn",
-                "app:app",
-                "--bind", f"0.0.0.0:{port}",
-                "--workers", "4",
-                "--threads", "2",
-                "--timeout", "300",
-                "--preload",
-                "--access-logfile", "-",
-            ],
-            env=env,
-        )
+        from gunicorn.app.base import BaseApplication
+
+        class GunicornApp(BaseApplication):
+            def __init__(self, application, options=None):
+                self.application = application
+                self.options = options or {}
+                super().__init__()
+
+            def load_config(self):
+                for key, value in self.options.items():
+                    self.cfg.set(key, value)
+
+            def load(self):
+                return self.application
+
+        GunicornApp(app, {
+            "bind": f"0.0.0.0:{port}",
+            "workers": 4,
+            "threads": 2,
+            "timeout": 300,
+            "preload_app": True,
+            "accesslog": "-",
+        }).run()
 
 
 def cli() -> None:

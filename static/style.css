@@ -17,12 +17,6 @@
     left: 50%;
     transform: translate(-50%, -50%);
     z-index: 9999;
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    0% { transform: translate(-50%, -50%) rotate(0deg); }
-    100% { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
 .alert {
@@ -83,6 +77,3 @@
 	background-color: rgb(0, 42, 61);
 }
 
-.card-body textarea {
-	height: 1em;
-}
