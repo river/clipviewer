@@ -12,43 +12,59 @@
 	<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 
 	<script>
-		// set dark mode on load
+		// set dark mode on load based on OS preference
 		if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
 			document.documentElement.setAttribute('data-bs-theme', 'dark')
 		} else {
 			document.documentElement.setAttribute('data-bs-theme', 'light')
 		}
 
-		// watch any changes between light and dark mode
+		// follow OS theme changes
 		window.matchMedia('(prefers-color-scheme: dark)')
 			.addEventListener('change', ({ matches }) => {
-				if (matches) {
-					document.documentElement.setAttribute('data-bs-theme', 'dark')
-				} else {
-					document.documentElement.setAttribute('data-bs-theme', 'light')
-				}
+				document.documentElement.setAttribute('data-bs-theme', matches ? 'dark' : 'light')
+				if (typeof updateThemeIcon === 'function') updateThemeIcon()
 			})
 	</script>
 </head>
 
 <body>
+	<button id="themeToggle" type="button" class="btn btn-outline-secondary theme-toggle-btn" title="Toggle dark/light mode">
+		<i id="themeIcon" class="fas fa-moon"></i>
+	</button>
 	<div id="alertContainer"></div>
 	<div id="app" class="container mt-4 mb-5">
-		<h1 class="mb-4">clipviewer</h1>
-
 		<form id="loadForm" class="mb-3 d-flex align-items-center justify-content-between">
 			<div class="input-group me-2">
 				<span class="input-group-text">Echos</span>
 				<input type="text" id="csvPathInput" class="form-control" placeholder="CSV file path">
+				<span class="input-group-text p-0">
+					<button type="button" class="btn btn-sm btn-link text-secondary" data-bs-toggle="tooltip" data-bs-placement="bottom"
+						title="Path to the CSV file to load. The CSV must contain an avi_path column with the path to each video clip. Any additional columns can be displayed as metadata.">
+						<i class="fas fa-info-circle"></i>
+					</button>
+				</span>
 			</div>
 			<div class="input-group me-2">
 				<span class="input-group-text">Metadata</span>
 				<input type="text" id="metadataInput" class="form-control" value="view">
+				<span class="input-group-text p-0">
+					<button type="button" class="btn btn-sm btn-link text-secondary" data-bs-toggle="tooltip" data-bs-placement="bottom"
+						title="Comma-separated list of column names from the CSV to display as metadata beneath each clip (e.g. 'view, patient_id').">
+						<i class="fas fa-info-circle"></i>
+					</button>
+				</span>
 			</div>
 			<div class="input-group me-2">
 				<span class="input-group-text">Options</span>
 				<input type="text" id="labelOptionsInput" class="form-control"
 					value=",PLAX_DEEP,PLAX,PLAX_ZOOM,RVINF,PSAX_PAP,PSAX_APEX,PSAX_MV,PSAX_AV,PSAX_AVZ,A4C,A4C_LV,A4C_ZOOM,A5C,A5C_ZOOM,A2C,A2C_LV,A2C_ZOOM,A3C,A3C_LV,A3C_ZOOM,SUBCOSTAL,SUPRASTERNAL,UNUSED,NOISE">
+				<span class="input-group-text p-0">
+					<button type="button" class="btn btn-sm btn-link text-secondary" data-bs-toggle="tooltip" data-bs-placement="bottom"
+						title="Comma-separated list of label options for the dropdown on each clip. These are the choices available when classifying clips. A leading comma adds a blank option.">
+						<i class="fas fa-info-circle"></i>
+					</button>
+				</span>
 			</div>
 			<button id="loadButton" type="submit" class="btn btn-primary">Load</button>
 		</form>
@@ -87,6 +103,28 @@
 		crossorigin="anonymous"></script>
 	<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 	<script src="{{ url_for('static', filename='app.js') }}"></script>
+	<script>
+		// Initialize Bootstrap tooltips
+		document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+			new bootstrap.Tooltip(el);
+		});
+
+		// Theme toggle
+		const themeToggle = document.getElementById('themeToggle');
+		const themeIcon = document.getElementById('themeIcon');
+
+		function updateThemeIcon() {
+			const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+			themeIcon.className = isDark ? 'fas fa-sun' : 'fas fa-moon';
+		}
+		updateThemeIcon();
+
+		themeToggle.addEventListener('click', () => {
+			const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+			document.documentElement.setAttribute('data-bs-theme', isDark ? 'light' : 'dark');
+			updateThemeIcon();
+		});
+	</script>
 </body>
 
 </html>
