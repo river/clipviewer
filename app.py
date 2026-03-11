@@ -128,7 +128,8 @@ def load_csv():
                     id INTEGER PRIMARY KEY,
                     avi_path TEXT NOT NULL UNIQUE,
                     metadata TEXT NOT NULL DEFAULT '',
-                    comment TEXT NOT NULL DEFAULT ''
+                    comment TEXT NOT NULL DEFAULT '',
+                    reviewed_at TEXT DEFAULT NULL
                 )
             """)
 
@@ -156,16 +157,17 @@ def get_clips():
 
         total = conn.execute("SELECT COUNT(*) FROM clips").fetchone()[0]
         rows = conn.execute(
-            "SELECT avi_path, metadata, comment FROM clips ORDER BY id LIMIT ? OFFSET ?",
+            "SELECT avi_path, metadata, comment, reviewed_at FROM clips ORDER BY id LIMIT ? OFFSET ?",
             (CLIPS_PER_PAGE, offset),
         ).fetchall()
 
     clips = [
         {
             "metadata": row["metadata"],
-            "clip_reviewed": "reviewed" if row["comment"] else "",
+            "clip_reviewed": "reviewed" if row["reviewed_at"] else "",
             "comment": row["comment"],
             "avi_path": row["avi_path"],
+            "reviewed_at": row["reviewed_at"] or "",
         }
         for row in rows
     ]
@@ -180,6 +182,21 @@ def get_clips():
             "clips_per_page": CLIPS_PER_PAGE,
         }
     )
+
+
+@app.route("/mark_reviewed", methods=["POST"])
+def mark_reviewed():
+    avi_paths = request.json
+    if not isinstance(avi_paths, list) or not avi_paths:
+        return jsonify({"status": "success"})
+    avi_paths = [str(p) for p in avi_paths]
+    placeholders = ",".join("?" * len(avi_paths))
+    with get_db() as conn:
+        conn.execute(
+            f"UPDATE clips SET reviewed_at = COALESCE(reviewed_at, datetime('now')) WHERE avi_path IN ({placeholders})",
+            avi_paths,
+        )
+    return jsonify({"status": "success"})
 
 
 @app.route("/save_comments", methods=["POST"])
@@ -201,14 +218,14 @@ def save_comments():
 def export_comments():
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT avi_path, comment FROM clips WHERE comment != '' ORDER BY avi_path"
+            "SELECT avi_path, comment, reviewed_at FROM clips WHERE comment != '' ORDER BY avi_path"
         ).fetchall()
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["avi_path", "comments"])
+    writer.writerow(["avi_path", "comments", "reviewed_at"])
     for row in rows:
-        writer.writerow([row["avi_path"], row["comment"]])
+        writer.writerow([row["avi_path"], row["comment"], row["reviewed_at"] or ""])
 
     return Response(
         buf.getvalue(),
