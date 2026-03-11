@@ -304,7 +304,7 @@ document.addEventListener('DOMContentLoaded', function () {
 		if (currentClips.length === 0) return Promise.resolve();
 
 		const comments = currentClips.map(clip => {
-			const el = document.getElementById(`comment-${clip.avi_path}`);
+			const el = document.getElementById(`comment-${escapeHtml(clip.avi_path)}`);
 			return {
 				avi_path: clip.avi_path,
 				comment: el ? el.value : ''
