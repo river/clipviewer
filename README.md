@@ -32,20 +32,18 @@
 
 1. Start the Flask server:
    ```
-   uv run python app.py [--port PORT]
+   uv run python app.py [OPTIONS]
    ```
 
 2. Open a web browser and navigate to `http://localhost:8888` (or the appropriate port if you've changed it).
 
-## Configuration
+## CLI Options
 
-The app can be configured via environment variables:
-
-| Variable | Description | Default |
+| Option | Description | Default |
 |---|---|---|
-| `CLIPVIEWER_CSV_DIR` | Allowed directory for CSV files | Current working directory |
-| `CLIPVIEWER_SECRET_KEY` | Flask session secret key | Random on each restart |
-| `FLASK_DEBUG` | Enable debug mode (`1`, `true`, or `yes`) | `false` |
+| `--port` | Port number to run the server on | `8888` |
+| `--csv-dir` | Allowed directory for CSV files | Current working directory |
+| `--debug / --no-debug` | Enable Flask debug mode | `--no-debug` |
 
 ## Notes
 
