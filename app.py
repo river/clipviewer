@@ -1,7 +1,5 @@
 import atexit
-import csv
 import hashlib
-import io
 import os
 import shutil
 import sqlite3
@@ -73,6 +71,18 @@ def detect_video_column(first_row: dict) -> str | None:
         if os.path.isfile(os.path.join(VIDEO_BASE, value)):
             return col
     return None
+
+
+def _detect_video_column_or_raise(first_row: dict) -> str:
+    detected = detect_video_column(first_row)
+    if detected is None:
+        raise ValueError(
+            "No 'avi_path' column found, and no column could be auto-detected "
+            "as containing video file paths. Ensure at least one column contains "
+            "paths to existing video files with extensions: "
+            + ", ".join(sorted(VIDEO_EXTENSIONS))
+        )
+    return detected
 
 
 def get_db() -> sqlite3.Connection:
@@ -163,53 +173,54 @@ def load_file():
         pass
 
     try:
-        # Read CSV or Parquet using Polars
         ext = os.path.splitext(file_path)[1].lower()
+
+        # Format-specific loading: parquet reads only needed columns
         if ext == ".parquet":
-            df = pl.read_parquet(file_path)
+            all_columns = list(pl.read_parquet_schema(file_path).keys())
+
+            missing_meta = set(metadata_fields) - set(all_columns)
+            if missing_meta:
+                raise ValueError(f"File is missing columns: {', '.join(missing_meta)}")
+
+            if "avi_path" not in all_columns:
+                sample = pl.read_parquet(file_path, n_rows=1)
+                first_row = sample.row(0, named=True) if len(sample) > 0 else {}
+                video_path_column = _detect_video_column_or_raise(first_row)
+
+            needed_cols = [video_path_column] + [m for m in metadata_fields if m != video_path_column]
+            df = pl.read_parquet(file_path, columns=needed_cols)
         else:
             df = pl.read_csv(file_path)
 
-        # Auto-detect video path column if avi_path is missing
+        # Format-agnostic: detect video column, validate, filter
         if "avi_path" not in df.columns:
-            first_row = df.row(0, named=True) if len(df) > 0 else {}
-            detected = detect_video_column(first_row)
-            if detected is None:
-                raise ValueError(
-                    "No 'avi_path' column found, and no column could be auto-detected "
-                    "as containing video file paths. Ensure at least one column contains "
-                    "paths to existing video files with extensions: "
-                    + ", ".join(sorted(VIDEO_EXTENSIONS))
-                )
-            video_path_column = detected
-            df = df.rename({detected: "avi_path"})
+            if video_path_column == "avi_path":
+                first_row = df.row(0, named=True) if len(df) > 0 else {}
+                video_path_column = _detect_video_column_or_raise(first_row)
+            df = df.rename({video_path_column: "avi_path"})
 
-        fieldnames = df.columns
-        rows = df.to_dicts()
-
-        # Validate metadata columns
-        missing_meta = set(metadata_fields) - set(fieldnames)
+        missing_meta = set(metadata_fields) - set(df.columns)
         if missing_meta:
             raise ValueError(f"File is missing columns: {', '.join(missing_meta)}")
 
-        # Filter rows with avi_path
-        rows = [r for r in rows if r.get("avi_path")]
+        df = df.filter(pl.col("avi_path").is_not_null() & (pl.col("avi_path").cast(pl.Utf8) != ""))
 
-        # Check video files (first 100)
-        for row in rows[:100]:
-            video_path = os.path.join(VIDEO_BASE, str(row["avi_path"]))
+        for avi_path in df["avi_path"].head(100).to_list():
+            video_path = os.path.join(VIDEO_BASE, str(avi_path))
             if not os.path.isfile(video_path):
                 raise FileNotFoundError(f"Video file not found: {video_path}")
 
-        # Build clip tuples with pre-formatted metadata
-        clip_rows = []
-        for row in rows:
-            metadata = (
-                "\n".join(f"{m}: {row.get(m, '')}" for m in metadata_fields)
-                if metadata_fields
-                else ""
+        # Build clip tuples using Polars expressions
+        if metadata_fields:
+            meta_expr = pl.concat_str(
+                [pl.format("{}: {}", pl.lit(m), pl.col(m).cast(pl.Utf8).fill_null("")) for m in metadata_fields],
+                separator="\n",
             )
-            clip_rows.append((str(row["avi_path"]), metadata))
+            clip_df = df.select(pl.col("avi_path").cast(pl.Utf8), meta_expr.alias("metadata"))
+        else:
+            clip_df = df.select(pl.col("avi_path").cast(pl.Utf8), pl.lit("").alias("metadata"))
+        clip_rows = list(clip_df.iter_rows())
 
         # Create/open database and import
         with sqlite3.connect(db_path, timeout=10) as conn:
@@ -347,9 +358,6 @@ def export_comments():
             "SELECT avi_path, comment, reviewed_at FROM clips"
         ).fetchall()
 
-    if not os.path.isfile(source_file_path):
-        abort(400, description=f"Source file not found: {source_file_path}")
-
     ext = os.path.splitext(source_file_path)[1].lower()
     if ext == ".parquet":
         df = pl.read_parquet(source_file_path)
@@ -374,25 +382,26 @@ def export_comments():
             description="Source file already contains clipviewer export columns.",
         )
 
-    comment_map = {
-        str(row["avi_path"]): (row["comment"], row["reviewed_at"] or "")
-        for row in clip_rows
-    }
-    source_rows = df.to_dicts()
+    annotations_df = pl.DataFrame(
+        {
+            "avi_path": [str(row["avi_path"]) for row in clip_rows],
+            annotation_comment_col: [row["comment"] for row in clip_rows],
+            annotation_reviewed_col: [row["reviewed_at"] or "" for row in clip_rows],
+        }
+    )
+    df = df.with_columns(pl.col(video_path_column).cast(pl.Utf8).alias("_join_key"))
+    df = df.join(annotations_df, left_on="_join_key", right_on="avi_path", how="left")
+    df = df.drop("_join_key")
+    df = df.with_columns(
+        pl.col(annotation_comment_col).fill_null(""),
+        pl.col(annotation_reviewed_col).fill_null(""),
+    )
 
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(source_columns + [annotation_comment_col, annotation_reviewed_col])
-    for row in source_rows:
-        avi_path = row.get(video_path_column)
-        comment, reviewed_at = comment_map.get(str(avi_path), ("", ""))
-        writer.writerow(
-            ["" if row.get(col) is None else row.get(col) for col in source_columns]
-            + [comment, reviewed_at]
-        )
+    export_cols = source_columns + [annotation_comment_col, annotation_reviewed_col]
+    csv_bytes = df.select(export_cols).fill_null("").write_csv()
 
     return Response(
-        buf.getvalue(),
+        csv_bytes,
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment; filename=comments.csv"},
     )
